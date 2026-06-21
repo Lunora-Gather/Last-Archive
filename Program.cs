@@ -31,6 +31,7 @@ namespace LastArchive
             }
 
             // 如果参数包含 --gui，运行WinForms图形界面
+#if WINDOWS
             if (args.Length > 0 && args[0] == "--gui")
             {
                 try
@@ -45,6 +46,13 @@ namespace LastArchive
                 }
                 return;
             }
+#else
+            if (args.Length > 0 && args[0] == "--gui")
+            {
+                Console.WriteLine("WinForms GUI is only supported on Windows.");
+                return;
+            }
+#endif
 
             // 如果参数包含 --web，运行Web服务器
             if (args.Length > 0 && args[0] == "--web")

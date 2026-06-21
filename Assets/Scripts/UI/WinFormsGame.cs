@@ -1,3 +1,4 @@
+#if WINDOWS
 // ============================================================
 // Last Archive - WinForms 图形界面（完整交互版）
 // 零外部原生依赖，.NET 内置
@@ -839,3 +840,5 @@ namespace LastArchive
         }
     }
 }
+#endif
+

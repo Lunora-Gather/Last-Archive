@@ -20,17 +20,37 @@ namespace LastArchive
 
         public void Start(int port = 8080)
         {
+            // 读取环境变量 PORT (适用于云端部署，如 Render, Railway 等)
+            var envPort = Environment.GetEnvironmentVariable("PORT");
+            if (!string.IsNullOrEmpty(envPort) && int.TryParse(envPort, out var p))
+            {
+                port = p;
+            }
+
             _port = port;
             _game = new GameManager();
             _game.Initialize(new MockAIProvider());
             _game.StartNewGame();
 
             _listener = new HttpListener();
-            _listener.Prefixes.Add($"http://localhost:{_port}/");
-            _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
-            _listener.Start();
+            
+            // 尝试绑定到通配符 http://*:{port}/ 供外网或云托管服务访问
+            // Windows 下非管理员运行此绑定会失败，此时自动降级至 localhost 绑定
+            try
+            {
+                _listener.Prefixes.Add($"http://*:{_port}/");
+                _listener.Start();
+                Console.WriteLine($"🎮 Last Archive Web Server running at http://*:{_port} (已开启公网/局域网共享)");
+            }
+            catch (Exception)
+            {
+                _listener = new HttpListener();
+                _listener.Prefixes.Add($"http://localhost:{_port}/");
+                _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
+                _listener.Start();
+                Console.WriteLine($"🎮 Last Archive Web Server running at http://localhost:{_port} (本地模式)");
+            }
 
-            Console.WriteLine($"🎮 Last Archive Web Server running at http://localhost:{_port}");
             Console.WriteLine("Press Ctrl+C to stop.");
 
             while (_listener.IsListening)
