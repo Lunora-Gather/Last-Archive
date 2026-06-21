@@ -2181,7 +2181,7 @@ async function useItemInCombat(itemId) {
   await doCombatAction('UseItem', itemId);
 }
 
-async function doCombatAction(actionStr, itemId = "") {
+async function doCombatAction(actionStr, itemId = '') {
   let r = await api('combat/action', {
     action: actionStr,
     targetIndex: selectedEnemyIndex,
