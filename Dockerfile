@@ -15,8 +15,9 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# 暴露出默认端口
-EXPOSE 8080
+# 暴露出默认端口 (Hugging Face Spaces 默认使用 7860 端口)
+ENV PORT=7860
+EXPOSE 7860
 
 # 运行 Web 服务
 ENTRYPOINT ["dotnet", "LastArchive.dll", "--web"]
