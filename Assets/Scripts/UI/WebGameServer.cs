@@ -1647,11 +1647,11 @@ async function loadTab(){
       `</select>` +
       `<div id='aiNetworkFields' style='display:${cfg.provider==='OpenAI'?'block':'none'}'>` +
         `<label style='font-size:12px; font-weight:bold; color:var(--text-secondary)'>API 接口基地址 (Base URL)</label>` +
-        `<input type='text' id='aiBaseUrl' value='${cfg.apiBaseUrl||""}' placeholder='例如: https://api.openai.com/v1' />` +
+        `<input type='text' id='aiBaseUrl' value='${cfg.apiBaseUrl||''}' placeholder='例如: https://api.openai.com/v1' />` +
         `<label style='font-size:12px; font-weight:bold; color:var(--text-secondary)'>API 密钥 (API Key)</label>` +
-        `<input type='password' id='aiApiKey' value='${cfg.apiKey||""}' placeholder='输入您的 API Key' />` +
+        `<input type='password' id='aiApiKey' value='${cfg.apiKey||''}' placeholder='输入您的 API Key' />` +
         `<label style='font-size:12px; font-weight:bold; color:var(--text-secondary)'>模型名称 (Model)</label>` +
-        `<input type='text' id='aiModel' value='${cfg.model||""}' placeholder='例如: gpt-3.5-turbo' />` +
+        `<input type='text' id='aiModel' value='${cfg.model||''}' placeholder='例如: gpt-3.5-turbo' />` +
       `</div>` +
       `<div style='display:flex; gap:10px; margin-top:8px'>` +
         `<button class='btn-sm' onclick='saveAIConfig()'>💾 保存配置</button>` +
