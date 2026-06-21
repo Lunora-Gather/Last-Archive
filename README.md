@@ -1,4 +1,15 @@
+---
+title: Last Archive
+emoji: 🎮
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+app_port: 7860
+pinned: false
+---
+
 # 🎮 最后档案城 / Last Archive
+
 
 <p align="center">
   <img src="https://img.shields.io/badge/Language-C%23-blue.svg?style=flat-square" alt="C#">
