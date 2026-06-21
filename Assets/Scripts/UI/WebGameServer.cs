@@ -919,6 +919,13 @@ namespace LastArchive
   --log-bg: #040406;
   --log-text: #10b981;
   --log-shadow: rgba(16, 185, 129, 0.3);
+  --log-crisis-color: #ef4444;
+  --log-success-color: #10b981;
+  --log-fail-color: #ef4444;
+  --log-summary-color: #c084fc;
+  --log-explore-color: #60a5fa;
+  --log-normal-color: #94a3b8;
+  --log-glow: 0 0 4px rgba(16, 185, 129, 0.25);
   --btn-bg: rgba(30, 30, 45, 0.6);
   --btn-border: rgba(255, 255, 255, 0.08);
   --tabs-bg: rgba(15, 15, 25, 0.6);
@@ -953,6 +960,13 @@ body.light-theme {
   --log-bg: #f8fafc;
   --log-text: #166534;
   --log-shadow: rgba(22, 101, 52, 0.1);
+  --log-crisis-color: #b91c1c;
+  --log-success-color: #15803d;
+  --log-fail-color: #b91c1c;
+  --log-summary-color: #7e22ce;
+  --log-explore-color: #1d4ed8;
+  --log-normal-color: #475569;
+  --log-glow: none;
   --btn-bg: rgba(255, 255, 255, 0.9);
   --btn-border: rgba(15, 23, 42, 0.08);
   --tabs-bg: rgba(226, 232, 240, 0.7);
@@ -1245,27 +1259,116 @@ body::before {
 .tag.purple{background:rgba(168, 85, 247, 0.15);color:#c084fc;border:1px solid rgba(168, 85, 247, 0.2)}
 .tag.gray{background:rgba(148, 163, 184, 0.15);color:#94a3b8;border:1px solid rgba(148, 163, 184, 0.2)}
 
-.log{
-  background: var(--log-bg);
+.console-container {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
   border-top: 1px solid var(--border-glow);
-  padding: 12px 20px;
-  height: 140px;
+  background: var(--log-bg);
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  transition: all 0.3s;
+}
+
+.console-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 20px;
+  background: rgba(0, 0, 0, 0.15);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+  font-family: 'Orbitron', monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 1px;
+  transition: all 0.3s;
+}
+
+.light-theme .console-header {
+  background: rgba(0, 0, 0, 0.02);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.console-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--log-success-color);
+  box-shadow: 0 0 6px var(--log-success-color);
+  animation: pulse-dot 2s infinite;
+}
+
+@keyframes pulse-dot {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
+
+.console-status {
+  font-size: 9px;
+  padding: 1px 5px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+  color: var(--text-secondary);
+  font-family: 'Orbitron', monospace;
+}
+
+.light-theme .console-status {
+  background: rgba(0, 0, 0, 0.02);
+  border: 1px solid rgba(0, 0, 0, 0.04);
+}
+
+.log {
+  background: var(--log-bg);
+  padding: 10px 20px;
+  height: 120px;
   overflow-y: auto;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   color: var(--log-text);
   text-shadow: 0 0 4px var(--log-shadow);
   box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.05);
-  flex-shrink: 0;
   position: relative;
   transition: background 0.3s, color 0.3s, border 0.3s;
 }
 
-.log div{
-  padding: 2px 0;
-  line-height: 1.4;
-  border-bottom: 1px solid rgba(16, 185, 129, 0.03);
+.log::-webkit-scrollbar {
+  width: 6px;
 }
+.log::-webkit-scrollbar-track {
+  background: transparent;
+}
+.log::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 3px;
+}
+.log::-webkit-scrollbar-thumb:hover {
+  background: var(--text-accent);
+}
+
+.light-theme .log::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+}
+
+.log-line {
+  padding: 3px 0;
+  line-height: 1.5;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.light-theme .log-line {
+  border-bottom: 1px solid rgba(0, 0, 0, 0.02);
+}
+
+.log-crisis { color: var(--log-crisis-color); text-shadow: var(--log-glow); }
+.log-success { color: var(--log-success-color); text-shadow: var(--log-glow); }
+.log-fail { color: var(--log-fail-color); text-shadow: var(--log-glow); }
+.log-summary { color: var(--log-summary-color); text-shadow: var(--log-glow); }
+.log-explore { color: var(--log-explore-color); text-shadow: var(--log-glow); }
+.log-normal { color: var(--log-normal-color); text-shadow: var(--log-glow); }
 
 .btn-sm{
   padding: 5px 12px;
@@ -1428,7 +1531,16 @@ input[type='text']:focus, input[type='password']:focus, select:focus {
   </div>
 </div>
 
-<div class='log' id='log'></div>
+<div class='console-container'>
+  <div class='console-header'>
+    <div style='display:flex; align-items:center; gap:8px;'>
+      <span class='console-dot'></span>
+      <span class='console-title'>SYSTEM TERMINAL // 实时系统日志</span>
+    </div>
+    <div class='console-status'>ACTIVE_STREAM</div>
+  </div>
+  <div class='log' id='log'></div>
+</div>
 
 <script>
 // Initial theme check
@@ -1676,7 +1788,14 @@ async function loadTab(){
 
 async function loadLog(){
   let r=await(await fetch('/api/log')).json();
-  document.getElementById('log').innerHTML=r.log.map(l=>`<div>${l}</div>`).join('');
+  document.getElementById('log').innerHTML=r.log.map(l=>{
+    if(l.includes('危机')) return '<div class=""log-line log-crisis"">⚠️ [CRIT] ' + l + '</div>';
+    if(l.includes('胜利')||l.includes('成功')) return '<div class=""log-line log-success"">✓ [INFO] ' + l + '</div>';
+    if(l.includes('失败')||l.includes('游戏结束')) return '<div class=""log-line log-fail"">✗ [ERR] ' + l + '</div>';
+    if(l.includes('结算')) return '<div class=""log-line log-summary"">📊 [SYS] ' + l + '</div>';
+    if(l.includes('探索')||l.includes('前往')) return '<div class=""log-line log-explore"">🌍 [EXP] ' + l + '</div>';
+    return '<div class=""log-line log-normal"">⚙️ [SYS] ' + l + '</div>';
+  }).join('');
   let el=document.getElementById('log');el.scrollTop=el.scrollHeight;
 }
 

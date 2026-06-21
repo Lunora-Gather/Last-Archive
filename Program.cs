@@ -15,6 +15,25 @@ namespace LastArchive
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
 
+            // 如果参数包含 --dump，导出 index.html 内容并退出
+            if (args.Length > 0 && args[0] == "--dump")
+            {
+                try
+                {
+                    var web = new WebGameServer();
+                    var html = (string)web.GetType()
+                        .GetMethod("GetIndexHtml", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+                        .Invoke(web, null);
+                    System.IO.File.WriteAllText("index_dump.html", html, System.Text.Encoding.UTF8);
+                    Console.WriteLine("HTML dumped successfully to index_dump.html");
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[Dump Error] {ex.Message}");
+                }
+                return;
+            }
+
             // 如果参数包含 --test，运行自动化测试
             if (args.Length > 0 && args[0] == "--test")
             {
