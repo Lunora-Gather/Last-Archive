@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <RootNamespace>LastArchive</RootNamespace>
+    <AssemblyName>LastArchive</AssemblyName>
+    <Version>1.1.0</Version>
+    <Company>Last Archive Studio</Company>
+    <Product>Last Archive</Product>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Description>Build a town. Preserve their memories. Decide what humanity deserves to remember.</Description>
+  </PropertyGroup>
+
+</Project>
