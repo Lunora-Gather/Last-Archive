@@ -1721,8 +1721,6 @@ function autoPlay(){
   }),2000);
 }
 
-}
-
 async function renderRelationsMatrix() {
   let relations = {};
   try {
