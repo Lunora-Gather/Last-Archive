@@ -11,6 +11,7 @@
     <Company>Last Archive Studio</Company>
     <Product>Last Archive</Product>
     <Description>Build a town. Preserve their memories. Decide what humanity deserves to remember.</Description>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(TargetFramework)' == 'net8.0-windows'">
