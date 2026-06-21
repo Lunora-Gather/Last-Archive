@@ -18,7 +18,7 @@
 
 ```bash
 # 安装 .NET 8 SDK 后
-cd "C:\Users\24377\Desktop\Last Archive"
+cd "Last Archive"
 dotnet run
 ```
 

@@ -100,7 +100,7 @@
 
 ```bash
 # 交互式游戏
-cd "C:\Users\24377\Desktop\Last Archive"
+cd "Last Archive"
 dotnet run
 
 # 自动化测试
