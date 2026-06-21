@@ -1263,9 +1263,10 @@ body::before {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  border-top: 1px solid var(--border-glow);
+  width: 320px;
+  border-left: 1px solid var(--border-glow);
   background: var(--log-bg);
-  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.15);
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
   transition: all 0.3s;
 }
 
@@ -1321,13 +1322,13 @@ body::before {
 .log {
   background: var(--log-bg);
   padding: 10px 20px;
-  height: 120px;
+  flex: 1;
   overflow-y: auto;
   font-family: 'JetBrains Mono', monospace;
   font-size: 12px;
   color: var(--log-text);
   text-shadow: 0 0 4px var(--log-shadow);
-  box-shadow: inset 0 4px 20px rgba(0, 0, 0, 0.05);
+  box-shadow: inset 4px 0 20px rgba(0, 0, 0, 0.05);
   position: relative;
   transition: background 0.3s, color 0.3s, border 0.3s;
 }
@@ -1529,17 +1530,16 @@ input[type='text']:focus, input[type='password']:focus, select:focus {
     </div>
     <div id='page'>加载中...</div>
   </div>
-</div>
-
-<div class='console-container'>
-  <div class='console-header'>
-    <div style='display:flex; align-items:center; gap:8px;'>
-      <span class='console-dot'></span>
-      <span class='console-title'>SYSTEM TERMINAL // 实时系统日志</span>
+  <div class='console-container'>
+    <div class='console-header'>
+      <div style='display:flex; align-items:center; gap:8px;'>
+        <span class='console-dot'></span>
+        <span class='console-title'>SYSTEM TERMINAL // 实时系统日志</span>
+      </div>
+      <div class='console-status'>ACTIVE_STREAM</div>
     </div>
-    <div class='console-status'>ACTIVE_STREAM</div>
+    <div class='log' id='log'></div>
   </div>
-  <div class='log' id='log'></div>
 </div>
 
 <script>
