@@ -58,7 +58,17 @@ namespace LastArchive
                 try
                 {
                     var ctx = _listener.GetContext();
-                    HandleRequest(ctx);
+                    System.Threading.ThreadPool.QueueUserWorkItem(state =>
+                    {
+                        try
+                        {
+                            HandleRequest((HttpListenerContext)state);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine($"Error handling request: {ex.Message}");
+                        }
+                    }, ctx);
                 }
                 catch (HttpListenerException) { break; }
                 catch (Exception ex) { Console.WriteLine($"Error: {ex.Message}"); }
@@ -180,6 +190,8 @@ namespace LastArchive
             if (path == "/api/combat/start" && method == "POST") return DoCombatStart(req);
             // POST /api/combat/action - 战斗动作
             if (path == "/api/combat/action" && method == "POST") return DoCombatAction(req);
+            // POST /api/craft - 合成物品
+            if (path == "/api/craft" && method == "POST") return DoCraft(req);
 
             return JsonSerializer.Serialize(new { error = "Unknown API" });
         }
@@ -384,6 +396,18 @@ namespace LastArchive
             if (_game.IsGameOver) result.Add(_game.IsVictory ? "胜利！" : "游戏结束");
 
             AddLog(result);
+            
+            // 自动保存游戏进度
+            try
+            {
+                bool autoSaveOk = _game.SaveGame();
+                if (autoSaveOk) AddLog("系统自动保存成功");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[AutoSave Error] {ex.Message}");
+            }
+
             return JsonSerializer.Serialize(new { ok = true, messages = result, gameOver = _game.IsGameOver, victory = _game.IsVictory });
         }
 
@@ -504,6 +528,71 @@ namespace LastArchive
             }
             AddLog(results);
             return JsonSerializer.Serialize(new { ok = true, messages = results });
+        }
+
+        private string DoCraft(HttpListenerRequest req)
+        {
+            var body = ReadBody(req);
+            var data = JsonSerializer.Deserialize<Dictionary<string, string>>(body);
+            string recipeId = data.GetValueOrDefault("recipeId", "");
+            
+            bool ok = false;
+            string msg = "未知配方";
+            
+            if (recipeId == "herb_paste")
+            {
+                if (_game.Resources.GetResourceAmount(ResourceType.Parts) >= 2 &&
+                    _game.Resources.GetResourceAmount(ResourceType.Medicine) >= 1)
+                {
+                    _game.Resources.ConsumeResource(ResourceType.Parts, 2);
+                    _game.Resources.ConsumeResource(ResourceType.Medicine, 1);
+                    ok = _game.Items.AddItemFromTemplate("herb_paste", "合成制作");
+                    msg = ok ? "合成草药膏成功！" : "背包空间不足，合成失败。";
+                }
+                else msg = "资源不足，需要 2 零件 + 1 药品！";
+            }
+            else if (recipeId == "morale_candy")
+            {
+                if (_game.Resources.GetResourceAmount(ResourceType.Food) >= 2 &&
+                    _game.Resources.GetResourceAmount(ResourceType.Water) >= 1)
+                {
+                    _game.Resources.ConsumeResource(ResourceType.Food, 2);
+                    _game.Resources.ConsumeResource(ResourceType.Water, 1);
+                    ok = _game.Items.AddItemFromTemplate("morale_candy", "合成制作");
+                    msg = ok ? "合成希望糖果成功！" : "背包空间不足，合成失败。";
+                }
+                else msg = "资源不足，需要 2 食物 + 1 水源！";
+            }
+            else if (recipeId == "combat_knife")
+            {
+                if (_game.Resources.GetResourceAmount(ResourceType.Parts) >= 5 &&
+                    _game.Resources.GetResourceAmount(ResourceType.Power) >= 2)
+                {
+                    _game.Resources.ConsumeResource(ResourceType.Parts, 5);
+                    _game.Resources.ConsumeResource(ResourceType.Power, 2);
+                    ok = _game.Items.AddItemFromTemplate("combat_knife", "合成制作");
+                    msg = ok ? "合成战术刀成功！" : "背包空间不足，合成失败。";
+                }
+                else msg = "资源不足，需要 5 零件 + 2 电力！";
+            }
+            else if (recipeId == "military_vest")
+            {
+                if (_game.Resources.GetResourceAmount(ResourceType.Parts) >= 6 &&
+                    _game.Resources.GetResourceAmount(ResourceType.Power) >= 3)
+                {
+                    _game.Resources.ConsumeResource(ResourceType.Parts, 6);
+                    _game.Resources.ConsumeResource(ResourceType.Power, 3);
+                    ok = _game.Items.AddItemFromTemplate("military_vest", "合成制作");
+                    msg = ok ? "合成军用防弹衣成功！" : "背包空间不足，合成失败。";
+                }
+                else msg = "资源不足，需要 6 零件 + 3 电力！";
+            }
+            
+            if (ok)
+            {
+                AddLog(msg);
+            }
+            return JsonSerializer.Serialize(new { ok, msg });
         }
 
         private string GetNPCRelations()
@@ -1490,9 +1579,42 @@ input[type='text']:focus, input[type='password']:focus, select:focus {
 .light-theme input[type='text'], .light-theme input[type='password'], .light-theme select {
   background: rgba(255, 255, 255, 0.85);
 }
+
+/* Screen Shake */
+@keyframes screen-shake-anim {
+  0%, 100% { transform: translate(0, 0); }
+  10%, 50%, 90% { transform: translate(-3px, 2px); }
+  20%, 60% { transform: translate(3px, -2px); }
+  30%, 70% { transform: translate(-2px, -3px); }
+  40%, 80% { transform: translate(2px, 3px); }
+}
+.screen-shake {
+  animation: screen-shake-anim 0.25s ease-in-out;
+}
+
+/* Combat Attack/Hurt animations */
+@keyframes slide-right {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(25px) scale(1.03); }
+  100% { transform: translateX(0); }
+}
+@keyframes slide-left {
+  0% { transform: translateX(0); }
+  50% { transform: translateX(-25px) scale(1.03); }
+  100% { transform: translateX(0); }
+}
+@keyframes shake-hurt {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-5px); }
+  40%, 80% { transform: translateX(5px); }
+}
+.combat-attack-right { animation: slide-right 0.3s ease-in-out; }
+.combat-attack-left { animation: slide-left 0.3s ease-in-out; }
+.combat-hurt-shake { animation: shake-hurt 0.25s ease-in-out; }
 </style>
 </head>
 <body>
+<canvas id='ashCanvas' style='position:fixed; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1; opacity:0.35;'></canvas>
 
 <div class='topbar'>
   <div class='title-container'>
@@ -1506,7 +1628,7 @@ input[type='text']:focus, input[type='password']:focus, select:focus {
 <div class='main'>
   <div class='sidebar'>
     <h3>控制面板</h3>
-    <button onclick='api(""nextday"")'>⏭ 推进到下一天</button>
+    <button onclick='advanceDay()'>⏭ 推进到下一天</button>
     <button onclick='api(""save"")'>💾 保存当前进度</button>
     <button onclick='api(""load"")'>📂 读取历史存档</button>
     <button class='gold' onclick='api(""newgame"")'>🆕 开启全新游戏</button>
@@ -1665,6 +1787,12 @@ async function loadTab(){
     html+=`</div>`;
     let relHtml = await renderRelationsMatrix();
     html += relHtml;
+    let relations = {};
+    try {
+      relations = await(await fetch('/api/npcs/relations')).json();
+    } catch(e) {}
+    let aliveNPCs = allNPCs.filter(n => n.isAlive);
+    html += await renderRelationsGraph(aliveNPCs, relations);
   } else if(currentTab===2){
     let bs=await(await fetch('/api/buildings')).json();
     html+=`<div class='building-grid'>`;
@@ -1701,6 +1829,52 @@ async function loadTab(){
     });
   } else if(currentTab===4){
     let items=await(await fetch('/api/items')).json();
+    let s=await(await fetch('/api/status')).json();
+    
+    // Crafting Workbench UI
+    html+=`<div class='card'>` +
+      `<h4>🛠 安全屋物品合成工作台</h4>` +
+      `<p style='font-size:12px; color:var(--text-secondary); margin-bottom:12px;'>利用当前安全屋囤积的资源零件，生产高级作战物资。</p>` +
+      `<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap:12px;'>` +
+        `<div style='background:var(--btn-bg); border:1px solid var(--btn-border); padding:10px; border-radius:6px; display:flex; flex-direction:column; justify-content:space-between;'>` +
+          `<div>` +
+            `<strong>草药膏 (恢复 15 HP)</strong>` +
+            `<div style='font-size:11px; margin-top:4px; color:${s.resources.parts>=2&&s.resources.medicine>=1?""#10b981"":""#ef4444""}'>` +
+              `消耗: 🔧 零件 ${s.resources.parts}/2 | 💊 药品 ${s.resources.medicine}/1` +
+            `</div>` +
+          `</div>` +
+          `<button class='btn-sm' style='margin-top:10px; width:100%' onclick='craft(""herb_paste"")' ${s.resources.parts>=2&&s.resources.medicine>=1?'':'disabled style=""opacity:0.5; cursor:not-allowed;""'}>制作合成</button>` +
+        `</div>` +
+        `<div style='background:var(--btn-bg); border:1px solid var(--btn-border); padding:10px; border-radius:6px; display:flex; flex-direction:column; justify-content:space-between;'>` +
+          `<div>` +
+            `<strong>希望糖果 (+20 士气)</strong>` +
+            `<div style='font-size:11px; margin-top:4px; color:${s.resources.food>=2&&s.resources.water>=1?""#10b981"":""#ef4444""}'>` +
+              `消耗: 🍖 食物 ${s.resources.food}/2 | 💧 水源 ${s.resources.water}/1` +
+            `</div>` +
+          `</div>` +
+          `<button class='btn-sm' style='margin-top:10px; width:100%' onclick='craft(""morale_candy"")' ${s.resources.food>=2&&s.resources.water>=1?'':'disabled style=""opacity:0.5; cursor:not-allowed;""'}>制作合成</button>` +
+        `</div>` +
+        `<div style='background:var(--btn-bg); border:1px solid var(--btn-border); padding:10px; border-radius:6px; display:flex; flex-direction:column; justify-content:space-between;'>` +
+          `<div>` +
+            `<strong>战术刀 (+7 攻击)</strong>` +
+            `<div style='font-size:11px; margin-top:4px; color:${s.resources.parts>=5&&s.resources.power>=2?""#10b981"":""#ef4444""}'>` +
+              `消耗: 🔧 零件 ${s.resources.parts}/5 | ⚡ 电力 ${s.resources.power}/2` +
+            `</div>` +
+          `</div>` +
+          `<button class='btn-sm' style='margin-top:10px; width:100%' onclick='craft(""combat_knife"")' ${s.resources.parts>=5&&s.resources.power>=2?'':'disabled style=""opacity:0.5; cursor:not-allowed;""'}>制作合成</button>` +
+        `</div>` +
+        `<div style='background:var(--btn-bg); border:1px solid var(--btn-border); padding:10px; border-radius:6px; display:flex; flex-direction:column; justify-content:space-between;'>` +
+          `<div>` +
+            `<strong>军用防弹衣 (+8 防御)</strong>` +
+            `<div style='font-size:11px; margin-top:4px; color:${s.resources.parts>=6&&s.resources.power>=3?""#10b981"":""#ef4444""}'>` +
+              `消耗: 🔧 零件 ${s.resources.parts}/6 | ⚡ 电力 ${s.resources.power}/3` +
+            `</div>` +
+          `</div>` +
+          `<button class='btn-sm' style='margin-top:10px; width:100%' onclick='craft(""military_vest"")' ${s.resources.parts>=6&&s.resources.power>=3?'':'disabled style=""opacity:0.5; cursor:not-allowed;""'}>制作合成</button>` +
+        `</div>` +
+      `</div>` +
+    `</div>`;
+
     if(!items.length) {
       html+=`<div class='card'><p style='text-align:center'>🎒 仓库存放空间当前为空</p></div>`;
     } else {
@@ -1887,6 +2061,62 @@ async function renderRelationsMatrix() {
   return html;
 }
 
+async function renderRelationsGraph(aliveNPCs, relations) {
+  let N = aliveNPCs.length;
+  if(N === 0) return '';
+  
+  let R = 100;
+  let cx = 160, cy = 160;
+  let nodes = aliveNPCs.map((n, i) => {
+    let angle = (i * 2 * Math.PI) / N;
+    return {
+      id: n.id,
+      name: n.name,
+      x: cx + R * Math.cos(angle),
+      y: cy + R * Math.sin(angle),
+      mental: n.mentalKey
+    };
+  });
+  
+  let linesSvg = '';
+  let nodesSvg = '';
+  
+  nodes.forEach((n1, idx1) => {
+    nodes.forEach((n2, idx2) => {
+      if(idx1 >= idx2) return;
+      let val = 0;
+      if(relations[n1.id] && relations[n1.id][n2.id] !== undefined) {
+        val = relations[n1.id][n2.id];
+      }
+      if(val !== 0) {
+        let color = val > 0 ? 'rgba(16, 185, 129, 0.5)' : 'rgba(239, 68, 68, 0.5)';
+        let thickness = Math.min(4, Math.abs(val) * 0.2 + 1);
+        linesSvg += `<line x1='${n1.x}' y1='${n1.y}' x2='${n2.x}' y2='${n2.y}' 
+          stroke='${color}' stroke-width='${thickness}' class='rel-line rel-from-${n1.id} rel-to-${n2.id}' />`;
+      }
+    });
+  });
+  
+  nodes.forEach(n => {
+    let mcolor = n.mental === 'Hopeful' ? '#10b981' : n.mental === 'Despair' || n.mental === 'Traumatized' ? '#ef4444' : n.mental === 'Anxious' ? '#fbbf24' : '#94a3b8';
+    nodesSvg += `<g class='node-group' id='node-g-${n.id}' onmouseover='hoverRelation(""${n.id}"")' onmouseout='unhoverRelation()' style='cursor:pointer;'>` +
+      `<circle cx='${n.x}' cy='${n.y}' r='14' fill='var(--card-bg)' stroke='${mcolor}' stroke-width='2.5' style='filter: drop-shadow(0 0 4px ${mcolor});' />` +
+      `<text x='${n.x}' y='${n.y + 4}' fill='var(--text-primary)' font-size='9' font-weight='bold' text-anchor='middle'>${n.name.substring(0,2)}</text>` +
+      `<text x='${n.x}' y='${n.y - 18}' fill='var(--text-secondary)' font-size='8' text-anchor='middle' style='visibility:hidden' class='node-lbl-${n.id}'>${n.name}</text>` +
+    `</g>`;
+  });
+  
+  let graphHtml = `<div class='card' style='margin-top:20px; display:flex; flex-direction:column; align-items:center;'>` +
+    `<h4>🔗 居民社交关系网图谱</h4>` +
+    `<p style='font-size:11px; color:var(--text-secondary); margin-top:4px;'>鼠标悬停在居民节点上查看羁绊连线</p>` +
+    `<svg width='320' height='320' style='background:rgba(0,0,0,0.15); border-radius:10px; margin-top:12px; border:1px solid var(--btn-border);'>` +
+      linesSvg + nodesSvg +
+    `</svg>` +
+    `</div>`;
+    
+  return graphHtml;
+}
+
 function renderCombatView(status) {
   let timelineHtml = `<div style='display:flex; gap:10px; overflow-x:auto; padding:10px 0; margin-bottom:16px;'>`;
   status.timeline.forEach((u, i) => {
@@ -1916,7 +2146,7 @@ function renderCombatView(status) {
   playersList.forEach(p => {
     let deadBadge = p.isDead ? `<span class='tag red'>战损</span>` : '';
     let activeBorder = status.activeUnitId === p.id && status.isPlayerTurn ? 'border-color:var(--text-accent); box-shadow:0 0 8px var(--border-glow);' : '';
-    listsHtml += `<div class='card' style='padding:10px; margin-top:8px; ${activeBorder}'>` +
+    listsHtml += `<div class='card' id='combat-card-${p.id}' style='padding:10px; margin-top:8px; ${activeBorder}'>` +
       `<div style='display:flex; justify-content:space-between; align-items:center;'>` +
         `<strong>${p.name}</strong>` +
         `<div>${p.role} ${deadBadge}</div>` +
@@ -1944,7 +2174,7 @@ function renderCombatView(status) {
     let borderStyle = isTarget ? 'border-color:#ef4444; box-shadow: 0 0 10px rgba(239, 68, 68, 0.4);' : '';
     let clickHandler = e.isDead ? '' : `onclick='selectedEnemyIndex=${aliveIdx}; switchTab(8)' style='cursor:pointer'`;
     
-    listsHtml += `<div class='card' ${clickHandler} style='padding:10px; margin-top:8px; ${borderStyle}'>` +
+    listsHtml += `<div class='card' id='combat-card-${e.id}' ${clickHandler} style='padding:10px; margin-top:8px; ${borderStyle}'>` +
       `<div style='display:flex; justify-content:space-between; align-items:center;'>` +
         `<strong>${isTarget ? '🎯 ' : ''}${e.name}</strong>` +
         `<div>${deadBadge}</div>` +
@@ -2303,6 +2533,9 @@ async function useItemInCombat(itemId) {
 }
 
 async function doCombatAction(actionStr, itemId = '') {
+  // Play attack SFX
+  playSFX('combat');
+  
   let r = await api('combat/action', {
     action: actionStr,
     targetIndex: selectedEnemyIndex,
@@ -2310,21 +2543,25 @@ async function doCombatAction(actionStr, itemId = '') {
   });
   
   if (r.ok) {
+    shakeScreen();
     if (r.combatEnded) {
-      let msg = r.victory ? '🎉 战斗胜利！' : r.escaped ? '🏃 成功撤退！' : '💀 战斗失败，队伍受到重创！';
-      let rewardText = '';
-      if (r.rewards && r.rewards.length > 0) {
-        rewardText = '\n\n获得战利品：\n' + r.rewards.map(rw => `${rw.type}: +${rw.amount}`).join('\n');
-      }
-      let injuredText = '';
-      if (r.injured && r.injured.length > 0) {
-        injuredText = '\n\n受伤队员：\n' + r.injured.join(', ');
-      }
-      
-      alert(msg + rewardText + injuredText);
+      setTimeout(() => {
+        playSFX(r.victory ? 'success' : 'fail');
+        let msg = r.victory ? '🎉 战斗胜利！' : r.escaped ? '🏃 成功撤退！' : '💀 战斗失败，队伍受到重创！';
+        let rewardText = '';
+        if (r.rewards && r.rewards.length > 0) {
+          rewardText = '\n\n获得战利品：\n' + r.rewards.map(rw => `${rw.type}: +${rw.amount}`).join('\n');
+        }
+        let injuredText = '';
+        if (r.injured && r.injured.length > 0) {
+          injuredText = '\n\n受伤队员：\n' + r.injured.join(', ');
+        }
+        alert(msg + rewardText + injuredText);
+      }, 100);
     }
     load();
   } else {
+    playSFX('fail');
     alert('行动执行失败: ' + (r.msg || '未知原因'));
   }
 }
@@ -2431,9 +2668,174 @@ async function testAIConfig() {
 }
 
 // Initial update of button text on script load
+// Global retro click audio listener
+document.addEventListener('click', (e) => {
+  if (e.target.tagName === 'BUTTON') {
+    playSFX('click');
+  }
+});
+
+// Sound generator using Web Audio API
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSFX(type) {
+  try {
+    if (audioCtx.state === 'suspended') {
+      audioCtx.resume();
+    }
+    
+    let osc = audioCtx.createOscillator();
+    let gain = audioCtx.createGain();
+    osc.connect(gain);
+    gain.connect(audioCtx.destination);
+    
+    let now = audioCtx.currentTime;
+    
+    if (type === 'click') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, now);
+      gain.gain.setValueAtTime(0.03, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+      osc.start(now);
+      osc.stop(now + 0.08);
+    } else if (type === 'nextday') {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(200, now);
+      osc.frequency.exponentialRampToValueAtTime(800, now + 0.4);
+      gain.gain.setValueAtTime(0.04, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+      osc.start(now);
+      osc.stop(now + 0.4);
+    } else if (type === 'combat') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(100, now);
+      osc.frequency.linearRampToValueAtTime(30, now + 0.25);
+      gain.gain.setValueAtTime(0.07, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.25);
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } else if (type === 'success') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(523.25, now); // C5
+      osc.frequency.setValueAtTime(659.25, now + 0.08); // E5
+      osc.frequency.setValueAtTime(783.99, now + 0.16); // G5
+      gain.gain.setValueAtTime(0.04, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    } else if (type === 'fail') {
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(140, now);
+      osc.frequency.linearRampToValueAtTime(60, now + 0.35);
+      gain.gain.setValueAtTime(0.05, now);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      osc.start(now);
+      osc.stop(now + 0.35);
+    }
+  } catch(e) {
+    console.error('Audio Context Error', e);
+  }
+}
+
+// Particle System
+(function() {
+  let canvas = document.getElementById('ashCanvas');
+  if(!canvas) return;
+  let ctx = canvas.getContext('2d');
+  let particles = [];
+  
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  
+  for(let i=0; i<45; i++) {
+    particles.push({
+      x: Math.random() * window.innerWidth,
+      y: Math.random() * window.innerHeight,
+      r: Math.random() * 2 + 0.5,
+      d: Math.random() * 0.4 + 0.15,
+      o: Math.random() * 0.4 + 0.15
+    });
+  }
+  
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    particles.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = (localStorage.getItem('theme') === 'light' ? `rgba(90, 100, 110, ${p.o * 0.6})` : `rgba(255, 255, 255, ${p.o})`);
+      ctx.fill();
+      
+      p.y += p.d;
+      p.x += Math.sin(p.y / 25) * 0.15;
+      
+      if(p.y > canvas.height) {
+        p.y = -10;
+        p.x = Math.random() * canvas.width;
+      }
+    });
+    requestAnimationFrame(draw);
+  }
+  draw();
+})();
+
+// Screen Shake helper
+function shakeScreen() {
+  document.body.classList.add('screen-shake');
+  setTimeout(() => document.body.classList.remove('screen-shake'), 250);
+}
+
+// Hover relation map functions
+function hoverRelation(npcId) {
+  document.querySelectorAll('.rel-line').forEach(l => {
+    if(l.classList.contains('rel-from-' + npcId) || l.classList.contains('rel-to-' + npcId)) {
+      l.style.strokeOpacity = '1.0';
+      l.style.filter = 'drop-shadow(0 0 3px currentColor)';
+    } else {
+      l.style.strokeOpacity = '0.08';
+    }
+  });
+  document.querySelectorAll('.node-lbl-' + npcId).forEach(lbl => lbl.style.visibility = 'visible');
+}
+
+function unhoverRelation() {
+  document.querySelectorAll('.rel-line').forEach(l => {
+    l.style.strokeOpacity = '';
+    l.style.filter = '';
+  });
+  document.querySelectorAll('[class^=""node-lbl-""]').forEach(lbl => lbl.style.visibility = 'hidden');
+}
+
+// Craft function
+async function craft(recipeId) {
+  let r = await api('craft', { recipeId });
+  if (r.ok) {
+    playSFX('success');
+    alert(r.msg);
+    load();
+  } else {
+    playSFX('fail');
+    alert(r.msg);
+  }
+}
+
+// Advance Day helper
+async function advanceDay() {
+  playSFX('nextday');
+  let r = await api('nextday');
+  if(r.ok) {
+    if(r.gameOver) {
+      playSFX(r.victory ? 'success' : 'fail');
+    }
+    load();
+  }
+}
+
 updateThemeButton();
 load();
-setInterval(loadLog,3000);
+setInterval(loadLog, 3000);
 </script>
 </body>
 </html>";
