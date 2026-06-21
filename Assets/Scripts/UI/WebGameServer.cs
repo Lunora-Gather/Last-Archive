@@ -916,7 +916,7 @@ namespace LastArchive
   --text-accent-dim: #0284c7;
   --sidebar-bg: rgba(12, 12, 20, 0.8);
   --card-bg: rgba(24, 24, 38, 0.65);
-  --log-bg: #040406;
+  --log-bg: rgba(10, 10, 16, 0.55);
   --log-text: #10b981;
   --log-shadow: rgba(16, 185, 129, 0.3);
   --log-crisis-color: #ef4444;
@@ -957,7 +957,7 @@ body.light-theme {
   --text-accent-dim: #0369a1;
   --sidebar-bg: rgba(241, 245, 249, 0.95);
   --card-bg: rgba(255, 255, 255, 0.85);
-  --log-bg: #f8fafc;
+  --log-bg: rgba(248, 250, 252, 0.7);
   --log-text: #166534;
   --log-shadow: rgba(22, 101, 52, 0.1);
   --log-crisis-color: #b91c1c;
@@ -977,6 +977,25 @@ body.light-theme {
 }
 
 *{margin:0;padding:0;box-sizing:border-box}
+
+/* Global Premium Styled Scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-accent);
+}
+.light-theme ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+}
 body{
   background: var(--bg-dark);
   background-image: var(--bg-gradient);
@@ -1266,6 +1285,7 @@ body::before {
   width: 320px;
   border-left: 1px solid var(--border-glow);
   background: var(--log-bg);
+  backdrop-filter: blur(12px);
   box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
   transition: all 0.3s;
 }
@@ -1320,7 +1340,7 @@ body::before {
 }
 
 .log {
-  background: var(--log-bg);
+  background: transparent;
   padding: 10px 20px;
   flex: 1;
   overflow-y: auto;
@@ -1331,24 +1351,6 @@ body::before {
   box-shadow: inset 4px 0 20px rgba(0, 0, 0, 0.05);
   position: relative;
   transition: background 0.3s, color 0.3s, border 0.3s;
-}
-
-.log::-webkit-scrollbar {
-  width: 6px;
-}
-.log::-webkit-scrollbar-track {
-  background: transparent;
-}
-.log::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-}
-.log::-webkit-scrollbar-thumb:hover {
-  background: var(--text-accent);
-}
-
-.light-theme .log::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.1);
 }
 
 .log-line {
