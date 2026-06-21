@@ -1,18 +1,4 @@
----
-title: Last Archive
-emoji: 🎮
-colorFrom: blue
-colorTo: indigo
-sdk: docker
-app_port: 7860
-pinned: false
----
-
 # 🎮 Last Archive | 最后档案城
-
-<p align="center">
-  <img src="docs/images/cover.png" alt="Last Archive Cover" width="100%" style="border-radius: 8px; margin-bottom: 20px;" />
-</p>
 
 <p align="center">
   <a href="https://huggingface.co/spaces/Jiehu-Claire/last-archive">
@@ -45,23 +31,6 @@ pinned: false
 
 ---
 
-## 📸 游戏视觉速览 / Visual Showcase
-
-<table align="center" width="100%">
-  <tr>
-    <td width="50%" align="center">
-      <img src="docs/images/screenshot1.png" alt="游戏主界面与居民拓扑" width="100%" style="border-radius: 6px;" /><br />
-      <b>🌐 极客 Web 终端与动态社交图谱</b>
-    </td>
-    <td width="50%" align="center">
-      <img src="docs/images/screenshot2.png" alt="生存探险与装备合成" width="100%" style="border-radius: 6px;" /><br />
-      <b>🛠️ 废土探索与物品合成工作台</b>
-    </td>
-  </tr>
-</table>
-
----
-
 ## ✨ 核心游戏特色 / Core Features
 
 ### 📊 1. 沙盒避难所经营 (Shelter Management)
@@ -81,7 +50,7 @@ pinned: false
 承接 25+ 个精心设计的主线、支线、派系及个人任务。每次关键抉择都会将城镇推向不同的演化方向，解锁 **广播重启、意识上传、永恒沉默** 等 6 种完全不同的终局结局。
 
 ### 🤖 6. 兼容 OpenAI 的 AI 叙事引擎 (AI Narrative Engine)
-支持接入 **GLM-4 / DeepSeek / Ollama / 自定义中转站** 等大语言模型，为每天生成随机事件、日记和独特的人际对话。内置精密的 Mock 数据兜底，即使完全离线也能顺畅体验完整的叙事深度。
+支持接入 **GLM-4 / DeepSeek / Ollama / 自定义中转站** 等大语言模型，为每天生成随机事件、日记 and 独特的人际对话。内置精密的 Mock 数据兜底，即使完全离线也能顺畅体验完整的叙事深度。
 
 ---
 
@@ -94,7 +63,7 @@ pinned: false
 * 🛠️ **合成生存工作台 (Crafting Station)**：在背包面板中新增工作台。消耗零件和电力，可合成草药膏（回复 HP）、希望糖果（恢复士气）、战术刀与军用防弹衣等关键作战装备。
 * 📺 **CRT 滤镜与双主题**：支持一键切换 CRT 扫描线显像管滤镜，内置明亮与暗黑极客双重色调。
 * 💾 **日终云端自动存档**：每日清晨自动保存最新状态，规避意外丢失进度。
-* 🤖 **沙盒自演化游玩 (Autoplay Mode)**：可开启自动决策，系统以每 2秒一天的速度自主管理、探索和应对危机，供您观察小镇的演化进程。
+* 🤖 **沙盒自演化游玩 (Autoplay Mode)**：可开启自动决策，系统以每 2 秒一天的速度自主管理、探索和应对危机，供您观察小镇的演化进程。
 
 ---
 
@@ -139,7 +108,7 @@ dotnet run --framework net8.0 -- --test
 
 1. 将本仓库 Fork 至您的 GitHub 账号。
 2. 登录 [Railway](https://railway.app/)，创建新 Web Service 并绑定 Fork 的仓库。
-3. Railway 会自动识别项目根目录 of `Dockerfile` 并进行多阶段构建。
+3. Railway 会自动识别项目根目录的 `Dockerfile` 并进行多阶段构建。
 4. 部署完成后，即可获得公网可访问的专属游戏页面！
 
 ---
@@ -162,7 +131,6 @@ Last Archive/
 │       ├── Save/              # JSON存档与加载
 │       └── UI/                # 控制台文字版、GUI、Web 服务器
 ├── docs/                      # 架构设计与迁移文档
-│   ├── images/                # README 封面图及游戏截图
 │   ├── ARCHITECTURE.md        # 系统架构设计
 │   ├── AI_INTEGRATION.md      # AI 大模型对接指南
 │   └── UNITY_MIGRATION.md     # Unity 迁移手册
