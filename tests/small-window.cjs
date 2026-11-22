@@ -23,6 +23,13 @@ async function verifySmallWindow(browser, base) {
   try {
     await page.goto(base, { waitUntil: 'domcontentloaded' });
     await page.getByText('今日补给预测').waitFor();
+    const coverWidth = await page.evaluate(async () => {
+      const cover = new Image();
+      cover.src = '/assets/archive-city.jpg';
+      await cover.decode();
+      return cover.naturalWidth;
+    });
+    assert.ok(coverWidth > 0);
     for (const [width, height] of [[1320, 810], [1280, 720], [1024, 600], [900, 430], [390, 620], [320, 568]]) {
       await page.setViewportSize({ width, height });
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth), width);
@@ -46,10 +53,9 @@ async function verifySmallWindow(browser, base) {
     await lastBuilding.waitFor();
     await page.mouse.move(600, 460);
     await page.mouse.wheel(0, 4000);
-    await page.waitForFunction(() => window.scrollY > 0);
+    await page.waitForFunction(card => window.scrollY > 0 &&
+      card.getBoundingClientRect().bottom <= innerHeight, await lastBuilding.elementHandle());
     await inView(menu);
-    const finalBuilding = await lastBuilding.boundingBox();
-    assert.ok(finalBuilding && finalBuilding.y + finalBuilding.height <= 600);
     await tabs.getByRole('button', { name: '探索/战斗' }).click();
     await page.getByText('选择目的地地图').waitFor();
     assert.equal(await page.evaluate(() => window.scrollY), 0);

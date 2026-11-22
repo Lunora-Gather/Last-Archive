@@ -127,6 +127,8 @@ NODE_PATH="$test_deps/node_modules" node tests/web-flow.cjs
 
 Docker 默认将网页存档放在 `/data/last-archive`。在 Hugging Face Spaces 上要跨容器重启保留存档，需要把持久卷挂载到 `/data`，或将 `LAST_ARCHIVE_SAVE_DIR` 指向其他持久挂载目录。
 
+同步到 Hugging Face 时，如果 Hub 以 Git LFS 存储封面图，请在 Space 的 `.gitattributes` 中保留 `Assets/Web/archive-city.jpg filter=lfs diff=lfs merge=lfs -text`。容器构建需要读取 JPEG 原图。
+
 ---
 
 ## 📂 项目结构概览 / Project Structure
