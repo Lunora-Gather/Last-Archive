@@ -16,7 +16,7 @@ namespace LastArchive
         private int _passCount = 0;
         private int _failCount = 0;
 
-        public void RunAll()
+        public bool RunAll()
         {
             Console.OutputEncoding = System.Text.Encoding.UTF8;
             Console.WriteLine("========================================");
@@ -54,6 +54,13 @@ namespace LastArchive
             TestMultipleCrisisSequence();
             TestPsychologyHopeAndDespair();
             TestFullGameLoop();
+            TestDaySettlementRegression();
+            TestMainStoryRegression();
+            TestSaveSnapshotRegression();
+            TestSupplyAndExpeditionDesign();
+            TestMarketAndEndingDesign();
+            TestCombatConsumableDesign();
+            TestDefensiveTurnDesign();
             Console.WriteLine($"  测试结果: {_passCount} 通过 / {_failCount} 失败");
 
             if (_failCount == 0)
@@ -64,6 +71,190 @@ namespace LastArchive
             {
                 Console.WriteLine("\n  ✗ 有测试失败，请检查。");
             }
+            return _failCount == 0;
+        }
+
+        private void TestDaySettlementRegression()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            Assert(game.Buildings.Build("watchtower"), "瞭望塔建造成功");
+            Assert(game.Buildings.Build("med_room"), "医疗室建造成功");
+            game.NPCs.InjureNPC("lin_doctor", 60);
+            game.Resources.AddResource(ResourceType.Food, 40);
+            int power = game.Resources.GetResourceAmount(ResourceType.Power);
+
+            Assert(game.AdvanceDay() && game.Time.CurrentDay == 2 && game.Time.CurrentPhase == GamePhase.Day,
+                "结算一次并进入第2天白天");
+            Assert(game.Resources.GetResourceAmount(ResourceType.Power) == power - 1, "瞭望塔每日只扣1电力");
+            Assert(game.NPCs.GetNPC("lin_doctor").Health == 27, "医疗室给予伤员额外5点治疗");
+            Assert(game.NPCs.GetNPC("lin_doctor").Memory.DiaryHistory.Count == 1, "第1天日记只写一次");
+            game.OnDayEnd();
+            Assert(game.TotalDaysSurvived == 1, "新一天开始前不重复结算");
+        }
+
+        private void TestMainStoryRegression()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            Assert(game.Buildings.Build("greenhouse"), "可在任务激活前建造温室");
+            game.Resources.AddResource(ResourceType.MemoryShards, 5);
+            game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 5);
+            Assert(game.Quests.GetQuest("main_2").Status == QuestStatus.Completed, "已有温室补记为已完成");
+
+            var team = new List<string> { "lin_doctor" };
+            Assert(game.Exploration.StartExploration("archive_ruins", team), "进入旧档案城");
+            Assert(game.Quests.GetQuest("main_3").Status == QuestStatus.Completed, "进入地图完成主线访问目标");
+            Assert(game.Exploration.SearchRoom()?.Type == ExplorationEventType.FindMemoryShard, "旧档案城大门掉落碎片");
+            Assert(game.Exploration.SearchRoom() == null, "同一次探索不能重复搜索同一房间");
+            game.Exploration.ReturnToBase();
+
+            game.Resources.AddResource(ResourceType.Parts, 20);
+            game.Quests.UpdateResourceObjectives(ResourceType.Parts, 20);
+            Assert(game.Exploration.StartExploration("broadcast_tower", team), "进入广播塔");
+            Assert(game.Quests.GetQuest("main_4").Status == QuestStatus.Completed, "进入广播塔后主线可完成");
+            Assert(!game.AdvanceDay() && !game.SaveGame(), "探索中禁止推进和保存");
+            game.Exploration.ReturnToBase();
+            game.Time.Restore(15, GamePhase.Day);
+            Assert(game.AdvanceDay() && game.IsGameOver && game.IsVictory, "广播塔主线触发并保留胜利结果");
+            game.Resources.AddResource(ResourceType.MemoryShards, 40);
+            game.Crises.Restore(new[] { new CrisisInstance { Type = CrisisType.MemoryStorm } });
+            Assert(game.Endings.CalculateEnding(game).Type == EndingType.Vanish, "记忆风暴可触发量子消失结局");
+        }
+
+        private void TestSaveSnapshotRegression()
+        {
+            var directory = System.IO.Directory.CreateTempSubdirectory();
+            try
+            {
+                string path = System.IO.Path.Combine(directory.FullName, "save.json");
+                var game = new GameManager(path);
+                game.Initialize();
+                game.StartNewGame();
+                game.Items.AddItemFromTemplate("combat_knife");
+                game.Items.EquipWeapon("anna", "combat_knife");
+                game.Psychology.ApplyTrauma("lin_doctor", "存档测试");
+                var count = game.Items.Count;
+                var attack = game.Items.GetNPCAttackBonus("anna");
+                Assert(game.AdvanceDay() && game.SaveGame(), "保存第二天的完整快照");
+                game.Items.AddItemFromTemplate("herb_paste");
+                Assert(game.LoadGame() && game.LoadGame() && game.Items.Count == count, "重复读档替换背包");
+                Assert(game.Items.GetNPCAttackBonus("anna") == attack && attack > 0, "读档恢复装备加成");
+                Assert(game.TotalDaysSurvived == 1 && game.Time.CurrentDay == 2, "读档恢复结算天数");
+
+                var legacy = game.Save.LoadGame();
+                legacy.LastSettledDay = null;
+                var npc = legacy.NPCStates.Find(state => state.Id == "anna");
+                npc.Status = NPCStatus.Working;
+                npc.CurrentWork = WorkType.None;
+                Assert(game.Save.SaveGame(legacy) && game.LoadGame() && game.NPCs.GetNPC("anna").CanExplore,
+                    "旧档中的悬空探索队员恢复待命");
+
+                System.IO.File.WriteAllText(path, "{");
+                Assert(!game.LoadGame() && game.Time.CurrentDay == 2 && game.Items.Count == count,
+                    "损坏存档不覆盖当前游戏");
+            }
+            finally
+            {
+                directory.Delete(recursive: true);
+            }
+        }
+
+        private void TestSupplyAndExpeditionDesign()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            var food = game.Time.GetSupplyForecast().First(item => item.Type == ResourceType.Food);
+            Assert(food.Stock == 50 && food.Used == 15 && food.Reserve == 35, "开局食物预测反映15人配给");
+            Assert(game.Buildings.Build("greenhouse") && game.Buildings.Build("water_station"), "建造双补给设施");
+            var projection = game.Time.GetSupplyForecast();
+            Assert(projection.First(item => item.Type == ResourceType.Food).Produced == 5, "温室实际产出进入预测");
+            Assert(projection.First(item => item.Type == ResourceType.Water).Produced == 5, "水站可在三级覆盖15人");
+            var npc = game.NPCs.GetNPC("lin_doctor");
+            int hunger = npc.Hunger;
+            game.Time.AdvanceToNight();
+            game.Time.AdvanceToSummary();
+            Assert(projection.All(item => game.Resources.GetResourceAmount(item.Type) == item.Reserve), "常规结算与生产预测一致");
+            Assert(npc.Hunger == hunger - GameConfig.DailyHungerIncrease, "足量配给缓解饥渴");
+            game.Time.AdvanceToNextDay();
+
+            npc.Fatigue = GameConfig.ExpeditionFatigueLimit - 1;
+            Assert(game.Exploration.StartExploration("abandoned_hospital", new() { npc.Id }), "低于疲劳阈值允许远征");
+            game.Exploration.ReturnToBase();
+            Assert(!npc.CanExplore && !game.Exploration.StartExploration("abandoned_hospital", new() { npc.Id }),
+                "超过疲劳阈值须休整");
+            game.Time.AdvanceToNight();
+            game.Time.AdvanceToSummary();
+            Assert(npc.CanExplore, "充分休整后恢复远征资格");
+        }
+
+        private void TestMarketAndEndingDesign()
+        {
+            var directory = System.IO.Directory.CreateTempSubdirectory();
+            try
+            {
+                string path = System.IO.Path.Combine(directory.FullName, "save.json");
+                var game = new GameManager(path);
+                game.Initialize();
+                game.StartNewGame();
+                Assert(!game.Trade("food"), "集市未建成无法交换");
+                Assert(game.Buildings.Build("market") && game.MarketTradesLeft == 1, "一级集市开放每日一次交换");
+                int water = game.Resources.GetResourceAmount(ResourceType.Water);
+                int parts = game.Resources.GetResourceAmount(ResourceType.Parts);
+                Assert(game.Trade("water") && game.Resources.GetResourceAmount(ResourceType.Water) == water + 12 &&
+                    game.Resources.GetResourceAmount(ResourceType.Parts) == parts - 3, "交换同步更新两类库存");
+                Assert(!game.Trade("water") && game.SaveGame() && game.LoadGame() && game.MarketTradesLeft == 0,
+                    "当日额度无法通过读档刷新");
+                Assert(game.AdvanceDay() && game.MarketTradesLeft == 1, "新一天恢复交换额度");
+
+                Assert(!game.ChooseEnding(EndingType.Broadcast), "广播塔修复前不能选择结局");
+                game.Quests.GetQuest("main_4").Status = QuestStatus.Completed;
+                Assert(!game.ChooseEnding(EndingType.Upload) && !game.IsGameOver, "上传前须有足够碎片");
+                game.Resources.AddResource(ResourceType.MemoryShards, GameConfig.UploadShardCost);
+                int shards = game.Resources.GetResourceAmount(ResourceType.MemoryShards);
+                Assert(game.ChooseEnding(EndingType.Upload) && game.IsVictory && game.IsGameOver &&
+                    game.Resources.GetResourceAmount(ResourceType.MemoryShards) == shards - GameConfig.UploadShardCost, "上传扣除碎片并进入选定结局");
+                Assert(game.SaveGame() && game.LoadGame() && game.Endings.CalculateEnding(game).Type == EndingType.Upload,
+                    "主动选择的结局随存档恢复");
+            }
+            finally
+            {
+                directory.Delete(recursive: true);
+            }
+        }
+
+        private void TestCombatConsumableDesign()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            Assert(game.Combat.StartCombat(new() { "lin_doctor" }, new() { "wanderer" }), "开始战斗消耗品测试");
+            var unit = game.Combat.PlayerUnits[0];
+            unit.Hp = 35;
+            game.Combat.ExecutePlayerAction(CombatAction.UseItem, itemId: "herb_paste");
+            Assert(unit.Hp > 35 && unit.Hp <= 50 && !game.Items.HasItem("herb_paste"),
+                "战斗草药膏以回合中当前生命为基准");
+        }
+
+        private void TestDefensiveTurnDesign()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            game.Combat.RegisterEnemy(new EnemyData
+            {
+                Id = "quick_foe", Name = "快速试炼敌人", Attack = 14, Defense = 0, Hp = 90, MaxHp = 90, Speed = 40
+            });
+            Assert(game.Combat.StartCombat(new() { "lin_doctor" }, new() { "quick_foe" }), "启动敌方先行动的战斗");
+            var unit = game.Combat.PlayerUnits[0];
+            int before = unit.Hp;
+            int fullDamage = Math.Max(1, 14 - unit.Defense / 2);
+            game.Combat.ExecutePlayerAction(CombatAction.Defend);
+            Assert(before - unit.Hp == Math.Max(1, (int)(fullDamage * GameConstants.DefenseDamageReduction)),
+                "同一队员行动之间跨轮防御仍能减伤");
         }
 
         private void Assert(bool condition, string testName, string detail = "")
@@ -411,7 +602,7 @@ namespace LastArchive
             Assert(main2.Status == QuestStatus.Active, "主线2自动激活");
 
             var side1 = game.Quests.GetQuest("side_1");
-            Assert(side1 != null && side1.Status == QuestStatus.Active, "支线1自动激活");
+            Assert(side1 != null && side1.Status == QuestStatus.Completed, "支线1激活时核对已有药品");
 
             // 完成主线3 → 解锁档案教团
             var main3 = game.Quests.GetQuest("main_3");
@@ -535,7 +726,7 @@ namespace LastArchive
             // Fallback 测试：用无效key创建，调用时自动降级
             var providerWithBadKey = new OpenAIProvider(new AIProviderConfig
             {
-                ApiBaseUrl = "https://invalid-url.example.com/v1",
+                ApiBaseUrl = "http://127.0.0.1:0/v1",
                 ApiKey = "bad-key",
                 Model = "test-model",
                 TimeoutSeconds = 3
@@ -833,7 +1024,8 @@ namespace LastArchive
         private void TestSaveLoadRoundtrip()
         {
             Console.WriteLine("\n--- 存档读档往返测试 ---");
-            var game = new GameManager();
+            var savePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"last-archive-test-{Guid.NewGuid():N}.json");
+            var game = new GameManager(savePath);
             game.Initialize(new MockAIProvider());
             game.StartNewGame();
 
@@ -1010,7 +1202,8 @@ namespace LastArchive
         private void TestSaveSystem()
         {
             Console.WriteLine("\n--- 存档系统测试 ---");
-            var game = new GameManager();
+            var savePath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), $"last-archive-test-{Guid.NewGuid():N}.json");
+            var game = new GameManager(savePath);
             game.Initialize(new MockAIProvider());
             game.StartNewGame();
 
@@ -1018,7 +1211,7 @@ namespace LastArchive
             Assert(game.SaveGame(), "保存游戏成功");
 
             // 先验证加载第1天存档
-            var game1 = new GameManager();
+            var game1 = new GameManager(savePath);
             game1.Initialize(new MockAIProvider());
             game1.StartNewGame();
             bool loadOk = game1.LoadGame();
@@ -1037,7 +1230,7 @@ namespace LastArchive
             Assert(game.SaveGame(), "保存第2天游戏成功");
 
             // 加载到新游戏实例
-            var game2 = new GameManager();
+            var game2 = new GameManager(savePath);
             game2.Initialize(new MockAIProvider());
             game2.StartNewGame();
             Assert(game2.LoadGame(), "加载游戏成功");

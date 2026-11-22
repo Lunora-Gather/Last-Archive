@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LastArchive
 {
@@ -40,18 +41,34 @@ namespace LastArchive
         public bool IsGameOver { get; private set; }
         public bool IsVictory { get; private set; }
         public string LastDailyEvent { get; private set; }
+        public EndingType? ChosenEnding { get; private set; }
+        private int _marketDay;
+        private int _marketTrades;
+        public sealed record MarketOffer(string Id, ResourceAmount Cost, ResourceAmount Reward);
+
+        public static IReadOnlyList<MarketOffer> MarketOffers { get; } = Array.AsReadOnly(new[]
+        {
+            new MarketOffer("food", new(ResourceType.Parts, 3), new(ResourceType.Food, 12)),
+            new MarketOffer("water", new(ResourceType.Parts, 3), new(ResourceType.Water, 12)),
+            new MarketOffer("parts", new(ResourceType.Medicine, 3), new(ResourceType.Parts, 5))
+        });
         public int TotalDaysSurvived { get; private set; }
         public int TotalExplorationsCompleted { get; private set; }
         public int TotalCombatsWon { get; private set; }
-        private int _starvationDays = 0;
+        private int _starvationDays;
+        private int _lastSettledDay;
+        private readonly Dictionary<string, int> _locationVisits = new();
         public DailyEventSystem DailyEvents { get; private set; }
         public CrisisSystem Crises { get; private set; }
         public EndingSystem Endings { get; private set; }
         public PsychologySystem Psychology { get; private set; }
         public TutorialSystem Tutorial { get; private set; }
 
-        public GameManager()
+        private readonly string _savePath;
+
+        public GameManager(string savePath = null)
         {
+            _savePath = savePath;
         }
 
         /// <summary>初始化所有系统</summary>
@@ -77,7 +94,7 @@ namespace LastArchive
             Exploration = new ExplorationSystem(Resources, NPCs, Items);
             Quests = new QuestSystem(Resources, NPCs);
             Time = new TimeSystem(Resources, NPCs, Buildings, Quests, MemSummarizer, EventGen);
-            Save = new SaveSystem();
+            Save = new SaveSystem(_savePath);
 
             // 新系统（需要在Combat之前初始化，因为Combat依赖ItemSystem）
             Factions = new FactionSystem();
@@ -105,10 +122,13 @@ namespace LastArchive
             EventBus.Subscribe<OnResourceCrisis>(OnResourceCrisis);
             EventBus.Subscribe<OnGameOver>(OnGameOverEvent);
             EventBus.Subscribe<OnCombatEnded>(OnCombatEndedEvent);
+            EventBus.Subscribe<OnExplorationStarted>(evt => VisitLocation(evt.MapId));
+            EventBus.Subscribe<OnExplorationRoomEntered>(evt => VisitLocation(evt.RoomId));
             EventBus.Subscribe<OnExplorationEnded>(OnExplorationEndedEvent);
             EventBus.Subscribe<OnAchievementUnlocked>(OnAchievementUnlockedEvent);
             EventBus.Subscribe<OnQuestStatusChanged>(OnQuestStatusChangedEvent);
-            EventBus.Subscribe<OnBuildingBuilt>(OnBuildingBuiltEvent);
+            EventBus.Subscribe<OnBuildingBuilt>(evt => Quests.UpdateBuildingObjectives(evt.BuildingId, false, 1));
+            EventBus.Subscribe<OnBuildingUpgraded>(evt => Quests.UpdateBuildingObjectives(evt.BuildingId, true, evt.NewLevel));
 
             IsInitialized = true;
             IsGameOver = false;
@@ -116,6 +136,13 @@ namespace LastArchive
             TotalDaysSurvived = 0;
             TotalExplorationsCompleted = 0;
             TotalCombatsWon = 0;
+            LastDailyEvent = null;
+            ChosenEnding = null;
+            _marketDay = 0;
+            _marketTrades = 0;
+            _starvationDays = 0;
+            _lastSettledDay = 0;
+            _locationVisits.Clear();
         }
 
         /// <summary>动态更新AI提供者</summary>
@@ -370,7 +397,7 @@ namespace LastArchive
             };
             waterStation.BuildCost.Add(ResourceType.Parts, 6);
             waterStation.BuildCost.Add(ResourceType.Power, 3);
-            waterStation.DailyOutput.Add(ResourceType.Water, 4);
+            waterStation.DailyOutput.Add(ResourceType.Water, 5);
             waterStation.UpgradeCost.Add(ResourceType.Parts, 10);
             waterStation.UpgradeCost.Add(ResourceType.Power, 3);
 
@@ -379,7 +406,7 @@ namespace LastArchive
             {
                 Id = "med_room", Name = "医疗室", Description = "治疗受伤的NPC，每天自动恢复少量生命值。",
                 Level = 0, MaxLevel = GameConfig.MaxBuildingLevel, Built = false, Unlocked = true,
-                EffectDescription = "受伤NPC每日额外恢复5HP"
+                EffectDescription = "每级使受伤居民每日额外恢复 5 点生命"
             };
             medRoom.BuildCost.Add(ResourceType.Parts, 4);
             medRoom.BuildCost.Add(ResourceType.Medicine, 3);
@@ -409,7 +436,7 @@ namespace LastArchive
             {
                 Id = "market", Name = "集市", Description = "与商人交易物资。",
                 Level = 0, MaxLevel = 3, Built = false, Unlocked = true,
-                EffectDescription = "解锁交易功能"
+                EffectDescription = "每级开放一次每日交换额度"
             };
             market.BuildCost.Add(ResourceType.Parts, 6);
             market.BuildCost.Add(ResourceType.Power, 2);
@@ -445,9 +472,9 @@ namespace LastArchive
                 MainEnemies = new List<string> { "wanderer", "toxic_spore" }
             };
             hospital.Rooms.Add(new RoomData { Id = "entrance", Name = "入口", Description = "医院大厅，一片狼藉。", DangerLevel = 1, ConnectedRooms = new List<string> { "corridor" } });
-            hospital.Rooms.Add(new RoomData { Id = "corridor", Name = "走廊", Description = "昏暗的走廊，墙上有抓痕。", DangerLevel = 2, ConnectedRooms = new List<string> { "entrance", "pharmacy", "surgery" } });
-            hospital.Rooms.Add(new RoomData { Id = "pharmacy", Name = "药房", Description = "部分药品还在货架上。", DangerLevel = 1, ConnectedRooms = new List<string> { "corridor" } });
-            hospital.Rooms.Add(new RoomData { Id = "surgery", Name = "手术室", Description = "手术台上残留着暗色痕迹。", DangerLevel = 3, ConnectedRooms = new List<string> { "corridor", "morgue" } });
+            hospital.Rooms.Add(new RoomData { Id = "corridor", Name = "走廊", EventType = ExplorationEventType.EnemyEncounter, Description = "昏暗的走廊，墙上有抓痕。", DangerLevel = 2, ConnectedRooms = new List<string> { "entrance", "pharmacy", "surgery" } });
+            hospital.Rooms.Add(new RoomData { Id = "pharmacy", Name = "药房", EventType = ExplorationEventType.FindResources, SearchItemId = "hospital_key", Description = "部分药品还在货架上。", DangerLevel = 1, ConnectedRooms = new List<string> { "corridor" } });
+            hospital.Rooms.Add(new RoomData { Id = "surgery", Name = "手术室", EventType = ExplorationEventType.FindMemoryShard, MemoryShardReward = 2, Description = "手术台上残留着暗色痕迹。", DangerLevel = 3, ConnectedRooms = new List<string> { "corridor", "morgue" } });
             hospital.Rooms.Add(new RoomData { Id = "morgue", Name = "太平间", Description = "冰柜中隐约传来声响。", DangerLevel = 4, Locked = true, RequiredItem = "hospital_key", ConnectedRooms = new List<string> { "surgery" } });
 
             // === 地铁废墟 ===
@@ -471,8 +498,8 @@ namespace LastArchive
                 MainLoot = new List<ResourceType> { ResourceType.MemoryShards },
                 MainEnemies = new List<string> { "shadow_creature", "memory_ghost", "archive_warden" }
             };
-            archive_ruins.Rooms.Add(new RoomData { Id = "gate", Name = "大门", Description = "锈蚀的铁门，上面刻着档案城的标记。", DangerLevel = 3, ConnectedRooms = new List<string> { "hall" } });
-            archive_ruins.Rooms.Add(new RoomData { Id = "hall", Name = "大厅", Description = "穹顶大厅，记忆碎片在空中飘浮。", DangerLevel = 4, ConnectedRooms = new List<string> { "gate", "archive_room", "server_room" } });
+            archive_ruins.Rooms.Add(new RoomData { Id = "gate", Name = "大门", EventType = ExplorationEventType.FindMemoryShard, Description = "锈蚀的铁门，上面刻着档案城的标记。", DangerLevel = 3, ConnectedRooms = new List<string> { "hall" } });
+            archive_ruins.Rooms.Add(new RoomData { Id = "hall", Name = "大厅", EventType = ExplorationEventType.FindMemoryShard, MemoryShardReward = 2, Description = "穹顶大厅，记忆碎片在空中飘浮。", DangerLevel = 4, ConnectedRooms = new List<string> { "gate", "archive_room", "server_room" } });
             archive_ruins.Rooms.Add(new RoomData { Id = "archive_room", Name = "档案室", Description = "一排排数据柜，有些还在运转。", DangerLevel = 5, Locked = true, RequiredItem = "archive_key", ConnectedRooms = new List<string> { "hall" } });
             archive_ruins.Rooms.Add(new RoomData { Id = "server_room", Name = "服务器室", Description = "嗡嗡作响的服务器，核心记忆就在这里。", DangerLevel = 5, Locked = true, RequiredItem = "archive_key", ConnectedRooms = new List<string> { "hall" } });
 
@@ -497,7 +524,7 @@ namespace LastArchive
                 MainLoot = new List<ResourceType> { ResourceType.Parts, ResourceType.Power },
                 MainEnemies = new List<string> { "broken_android", "shadow_swarm" }
             };
-            tower.Rooms.Add(new RoomData { Id = "lobby", Name = "大厅", Description = "空旷的大厅，电梯早已停运。", DangerLevel = 2, ConnectedRooms = new List<string> { "stairs" } });
+            tower.Rooms.Add(new RoomData { Id = "lobby", Name = "大厅", EventType = ExplorationEventType.FindResources, SearchItemId = "tower_key", Description = "空旷的大厅，电梯早已停运。", DangerLevel = 2, ConnectedRooms = new List<string> { "stairs" } });
             tower.Rooms.Add(new RoomData { Id = "stairs", Name = "楼梯间", Description = "向上延伸的楼梯，越往上越危险。", DangerLevel = 3, ConnectedRooms = new List<string> { "lobby", "antenna_deck" } });
             tower.Rooms.Add(new RoomData { Id = "antenna_deck", Name = "天线平台", Description = "塔顶的天线平台，可以看到远方的灯火。", DangerLevel = 4, Locked = true, RequiredItem = "tower_key", ConnectedRooms = new List<string> { "stairs" } });
 
@@ -1016,11 +1043,21 @@ namespace LastArchive
                 Quests.UpdateObjectiveProgress(quest.QuestId, ObjectiveType.TalkToNPC, npcId, 1);
             }
 
-            // 派系声望微调
-            var faction = Factions.GetNPCFaction(npcId);
-            if (faction.HasValue)
+            // 每名居民每天首次交流会进入日记，也能增加其所在派系的一点声望。
+            if (!npc.Memory.Entries.Any(entry => entry.Day == Time.CurrentDay && entry.EventType == MemoryEventType.ImportantDialogue))
             {
-                Factions.ChangeReputation(faction.Value, 1);
+                NPCs.AddMemory(npc.Id, new MemoryEntry
+                {
+                    MemoryId = Guid.NewGuid().ToString(),
+                    Day = Time.CurrentDay,
+                    Actor = "player",
+                    Target = npc.Id,
+                    EventType = MemoryEventType.ImportantDialogue,
+                    Description = dialogue,
+                    EmotionalWeight = 1
+                });
+                var faction = Factions.GetNPCFaction(npcId);
+                if (faction.HasValue) Factions.ChangeReputation(faction.Value, 1);
             }
 
             return dialogue;
@@ -1029,7 +1066,37 @@ namespace LastArchive
         /// <summary>保存游戏</summary>
         public bool SaveGame()
         {
+            if (!CanSave) return false;
+
             var data = Save.CreateNewSaveData(Time.CurrentDay, Time.CurrentPhase, Resources, NPCs, Buildings, Quests, Items, Factions, Achievements);
+            data.LastSettledDay = _lastSettledDay;
+            data.StarvationDays = _starvationDays;
+            data.TotalDaysSurvived = TotalDaysSurvived;
+            data.TotalExplorationsCompleted = TotalExplorationsCompleted;
+            data.TotalCombatsWon = TotalCombatsWon;
+            data.IsGameOver = IsGameOver;
+            data.IsVictory = IsVictory;
+            data.LastDailyEvent = LastDailyEvent;
+            data.ChosenEnding = ChosenEnding;
+            data.MarketDay = _marketDay;
+            data.MarketTrades = _marketTrades;
+            data.LocationVisits = new Dictionary<string, int>(_locationVisits);
+            data.Crises = Crises.ActiveCrises;
+            foreach (var state in data.NPCStates)
+            {
+                state.WeaponId = Items.GetEquippedWeapon(state.Id);
+                state.ArmorId = Items.GetEquippedArmor(state.Id);
+                state.MentalState = Psychology.GetState(state.Id);
+                state.MentalTraits = Psychology.GetTraits(state.Id);
+            }
+            foreach (var map in Exploration.GetAllMaps())
+            {
+                if (map.Unlocked) data.UnlockedLocations.Add(map.Id);
+                foreach (var room in map.Rooms)
+                {
+                    data.Rooms.Add(new RoomSaveData { MapId = map.Id, RoomId = room.Id, Visited = room.Visited, Locked = room.Locked });
+                }
+            }
             return Save.SaveGame(data);
         }
 
@@ -1038,6 +1105,38 @@ namespace LastArchive
         {
             var data = Save.LoadGame();
             if (data == null) return false;
+
+            Initialize(AIProvider);
+            StartNewGame();
+
+            _lastSettledDay = data.LastSettledDay ?? Math.Max(0,
+                data.CurrentDay - (data.CurrentPhase == GamePhase.Summary ? 0 : 1));
+            _starvationDays = data.StarvationDays;
+            TotalDaysSurvived = data.LastSettledDay.HasValue ? data.TotalDaysSurvived : _lastSettledDay;
+            TotalExplorationsCompleted = data.TotalExplorationsCompleted;
+            TotalCombatsWon = data.TotalCombatsWon;
+            IsGameOver = data.IsGameOver;
+            IsVictory = data.IsVictory;
+            LastDailyEvent = data.LastDailyEvent;
+            ChosenEnding = data.ChosenEnding;
+            _marketDay = data.MarketDay;
+            _marketTrades = data.MarketTrades;
+            foreach (var visit in data.LocationVisits ?? new Dictionary<string, int>())
+                _locationVisits[visit.Key] = visit.Value;
+            Crises.Restore((data.Crises ?? new List<CrisisInstance>()).FindAll(crisis => crisis != null));
+            if (data.LastSettledDay.HasValue && data.UnlockedLocations != null)
+            {
+                var unlocked = new HashSet<string>(data.UnlockedLocations);
+                foreach (var map in Exploration.GetAllMaps()) map.Unlocked = unlocked.Contains(map.Id);
+            }
+            foreach (var roomState in data.Rooms ?? new List<RoomSaveData>())
+            {
+                if (string.IsNullOrEmpty(roomState?.MapId)) continue;
+                var room = Exploration.GetMap(roomState.MapId)?.Rooms.Find(r => r.Id == roomState.RoomId);
+                if (room == null) continue;
+                room.Visited = roomState.Visited;
+                room.Locked = roomState.Locked;
+            }
 
             // 恢复时间
             Time.Restore(data.CurrentDay, data.CurrentPhase);
@@ -1063,10 +1162,16 @@ namespace LastArchive
                     npc.Loyalty = nsd.Loyalty;
                     npc.Status = nsd.Status;
                     npc.CurrentWork = nsd.CurrentWork;
-                    npc.Relationships = nsd.Relationships;
-                    npc.Memory.Entries = nsd.MemoryEntries;
-                    npc.Memory.Summary = nsd.MemorySummary;
+                    npc.Relationships = nsd.Relationships ?? new List<NPCRelationship>();
+                    npc.Memory.Entries = nsd.MemoryEntries ?? new List<MemoryEntry>();
+                    npc.Memory.Summary = nsd.MemorySummary ?? "";
                     npc.Memory.DiaryHistory = nsd.DiaryHistory ?? new List<string>();
+                    if (npc.Status == NPCStatus.Working && npc.CurrentWork == WorkType.None)
+                        npc.Status = NPCStatus.Idle;
+                    if (nsd.MentalState.HasValue && nsd.MentalTraits.HasValue)
+                        Psychology.Restore(npc.Id, nsd.MentalState.Value, nsd.MentalTraits.Value);
+                    else
+                        Psychology.Initialize(npc.Id, npc.Morale, npc.Loyalty);
                 }
             }
 
@@ -1088,7 +1193,7 @@ namespace LastArchive
                 if (quest != null)
                 {
                     quest.Status = qsd.Status;
-                    for (int i = 0; i < qsd.ObjectiveProgress.Count && i < quest.Objectives.Count; i++)
+                    for (int i = 0; i < (qsd.ObjectiveProgress?.Count ?? 0) && i < quest.Objectives.Count; i++)
                     {
                         quest.Objectives[i].CurrentProgress = qsd.ObjectiveProgress[i];
                     }
@@ -1098,6 +1203,7 @@ namespace LastArchive
             // 恢复物品
             if (data.Items != null)
             {
+                Items.ClearInventory();
                 foreach (var isd in data.Items)
                 {
                     Items.AddItem(new ItemInstance
@@ -1107,9 +1213,16 @@ namespace LastArchive
                         AttackBonus = isd.AttackBonus, DefenseBonus = isd.DefenseBonus,
                         HealthBonus = isd.HealthBonus, HealAmount = isd.HealAmount,
                         MoraleBoost = isd.MoraleBoost, ResourceType = isd.ResourceType,
-                        ResourceAmount = isd.ResourceAmount, Source = isd.Source
+                        ResourceAmount = isd.ResourceAmount, Source = isd.Source,
+                        RequiredLevel = isd.RequiredLevel ?? Items.GetTemplate(isd.Id)?.RequiredLevel ?? 0
                     });
                 }
+            }
+
+            foreach (var state in data.NPCStates)
+            {
+                if (!string.IsNullOrEmpty(state.WeaponId)) Items.EquipWeapon(state.Id, state.WeaponId);
+                if (!string.IsNullOrEmpty(state.ArmorId)) Items.EquipArmor(state.Id, state.ArmorId);
             }
 
             // 恢复派系
@@ -1117,6 +1230,7 @@ namespace LastArchive
             {
                 foreach (var fsd in data.Factions)
                 {
+                    if (fsd == null) continue;
                     var faction = Factions.GetFaction(fsd.Type);
                     if (faction != null)
                     {
@@ -1127,13 +1241,20 @@ namespace LastArchive
             }
 
             // 恢复成就
+            Achievements.UpdateDay(Time.CurrentDay);
             if (data.UnlockedAchievements != null)
             {
                 foreach (var achId in data.UnlockedAchievements)
                 {
-                    Achievements.Unlock(achId);
+                    var achievement = string.IsNullOrEmpty(achId) ? null : Achievements.GetAchievement(achId);
+                    if (achievement == null) continue;
+                    achievement.Unlocked = true;
+                    achievement.UnlockedDay = data.AchievementDays?.GetValueOrDefault(achId, Time.CurrentDay) ?? Time.CurrentDay;
                 }
             }
+            // Repair older saves captured before early buildings were reconciled.
+            if (!data.LastSettledDay.HasValue)
+                foreach (var quest in Quests.GetActiveQuests()) ReconcileQuest(quest.QuestId);
             return true;
         }
 
@@ -1163,7 +1284,7 @@ namespace LastArchive
         private void OnGameOverEvent(OnGameOver evt)
         {
             IsGameOver = true;
-            IsVictory = false;
+            IsVictory = evt.Victory;
             Console.WriteLine($"[游戏结束] {evt.Reason}");
         }
 
@@ -1191,6 +1312,11 @@ namespace LastArchive
 
         private void OnQuestStatusChangedEvent(OnQuestStatusChanged evt)
         {
+            if (evt.NewStatus == QuestStatus.Active)
+            {
+                ReconcileQuest(evt.QuestId);
+                return;
+            }
             if (evt.NewStatus != QuestStatus.Completed) return;
 
             // 主线任务链：完成 main_N 后自动激活 main_N+1
@@ -1219,16 +1345,82 @@ namespace LastArchive
             Quests.StartQuest("side_5");
         }
 
-        private void OnBuildingBuiltEvent(OnBuildingBuilt evt)
+        private void VisitLocation(string locationId)
         {
-            if (evt.BuildingId == "greenhouse")
+            _locationVisits[locationId] = _locationVisits.GetValueOrDefault(locationId) + 1;
+            Quests.UpdateVisitLocationObjectives(locationId);
+        }
+
+        private void ReconcileQuest(string questId)
+        {
+            var quest = Quests.GetQuest(questId);
+            foreach (var objective in quest.Objectives)
             {
-                Quests.UpdateBuildingObjectives("greenhouse", false, 1);
+                int progress = objective.Type switch
+                {
+                    ObjectiveType.BuildFacility => Buildings.GetBuilding(objective.TargetId)?.Built == true ? 1 : 0,
+                    ObjectiveType.UpgradeBuilding => Buildings.GetBuilding(objective.TargetId)?.Level ?? 0,
+                    ObjectiveType.VisitLocation or ObjectiveType.ReachRoom => _locationVisits.GetValueOrDefault(objective.TargetId),
+                    ObjectiveType.CollectResource when Enum.TryParse<ResourceType>(objective.TargetId, out var type)
+                        => Resources.GetResourceAmount(type),
+                    ObjectiveType.SurviveDays => Time.CurrentDay,
+                    _ => objective.CurrentProgress
+                };
+                objective.CurrentProgress = Math.Clamp(progress, 0, objective.RequiredAmount);
             }
+            if (quest.AllObjectivesComplete) Quests.CompleteQuest(questId);
+        }
+
+        public bool CanSave => !Exploration.IsExploring && !Combat.InCombat;
+
+        public int MarketCapacity => Buildings.GetBuilding("market") is { Built: true } market ? market.Level : 0;
+        public int MarketTradesLeft => Math.Max(0, MarketCapacity - (_marketDay == Time.CurrentDay ? _marketTrades : 0));
+
+        public bool Trade(string offerId)
+        {
+            if (IsGameOver || !CanSave || MarketTradesLeft == 0) return false;
+            var offer = MarketOffers.FirstOrDefault(entry => entry.Id == offerId);
+            if (offer == null || !Resources.ConsumeResource(offer.Cost.Type, offer.Cost.Amount)) return false;
+            if (_marketDay != Time.CurrentDay)
+            {
+                _marketDay = Time.CurrentDay;
+                _marketTrades = 0;
+            }
+            _marketTrades++;
+            Resources.AddResource(offer.Reward.Type, offer.Reward.Amount);
+            Quests.UpdateResourceObjectives(offer.Reward.Type, Resources.GetResourceAmount(offer.Reward.Type));
+            return true;
+        }
+
+        public bool CanChooseEnding => !IsGameOver && CanSave &&
+            Quests.GetQuest("main_4")?.Status == QuestStatus.Completed;
+
+        public static IReadOnlyList<EndingType> EndingChoices { get; } =
+            Array.AsReadOnly(new[] { EndingType.Broadcast, EndingType.Silence, EndingType.Upload });
+
+        public bool ChooseEnding(EndingType type)
+        {
+            if (!CanChooseEnding || !EndingChoices.Contains(type)) return false;
+            if (type == EndingType.Upload && !Resources.ConsumeResource(ResourceType.MemoryShards, GameConfig.UploadShardCost))
+                return false;
+            ChosenEnding = type;
+            EventBus.Publish(new OnGameOver { Victory = true, Reason = Endings.CalculateEnding(this).Description });
+            return true;
+        }
+
+        public bool AdvanceDay()
+        {
+            if (IsGameOver || Time.IsPaused || !CanSave) return false;
+            if (Time.CurrentPhase == GamePhase.Day) Time.AdvanceToNight();
+            Time.AdvanceToSummary();
+            OnDayEnd();
+            if (!IsGameOver) Time.AdvanceToNextDay();
+            return true;
         }
 
         public void CheckGameOver()
         {
+            if (IsGameOver) return;
             if (NPCs.GetAliveCount() == 0)
             {
                 EventBus.Publish(new OnGameOver { Reason = "所有居民都已离世，档案城陷入了死寂。" });
@@ -1252,14 +1444,19 @@ namespace LastArchive
             var mainQuest4 = Quests.GetQuest("main_4");
             if (mainQuest4 != null && mainQuest4.Status == QuestStatus.Completed && Time.CurrentDay >= 15)
             {
-                IsVictory = true;
-                IsGameOver = true;
-                EventBus.Publish(new OnGameOver { Reason = "广播塔修复成功！你联系到了外界幸存者，新的篇章即将开启……" });
+                EventBus.Publish(new OnGameOver
+                {
+                    Victory = true,
+                    Reason = "广播塔修复成功！你联系到了外界幸存者，新的篇章即将开启……"
+                });
             }
         }
 
         public void OnDayEnd()
         {
+            if (Time.CurrentPhase != GamePhase.Summary || _lastSettledDay >= Time.CurrentDay || IsGameOver) return;
+            _lastSettledDay = Time.CurrentDay;
+            LastDailyEvent = null;
             TotalDaysSurvived = Time.CurrentDay;
             Achievements.UpdateDay(Time.CurrentDay);
             Achievements.CheckAchievements(this);
@@ -1289,12 +1486,9 @@ namespace LastArchive
 
             if (!IsGameOver)
             {
-                string evt = DailyEvents.TriggerRandomEvent(this);
-                if (!string.IsNullOrEmpty(evt))
-                {
-                    LastDailyEvent = evt;
-                    Console.WriteLine($"  {evt}");
-                }
+                string worldEvent = DailyEvents.TriggerRandomEvent(this);
+                LastDailyEvent = string.IsNullOrEmpty(worldEvent) ? Time.LastNarrative : worldEvent;
+                if (!string.IsNullOrEmpty(LastDailyEvent)) Console.WriteLine($"  {LastDailyEvent}");
             }
         }
     }

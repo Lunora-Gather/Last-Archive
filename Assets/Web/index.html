@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#131618">
+  <title>最后档案城 · Last Archive</title>
+  <link rel="stylesheet" href="/assets/game.css">
+  <script defer src="/assets/game.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到游戏内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <button class="brand" data-tab="0" aria-label="最后档案城总览">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span><b>LAST ARCHIVE</b><small>最后档案城</small></span>
+      </button>
+      <div class="day-status">
+        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+        <span id="title">连接中</span>
+      </div>
+      <div class="header-actions">
+        <button id="themeToggleBtn" class="icon-button" aria-label="切换浅色主题" title="切换浅色主题">◐</button>
+        <button id="advanceBtn" class="primary" disabled>推进到下一天 <span aria-hidden="true">→</span></button>
+      </div>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="navigation">
+      <nav class="tabs" aria-label="游戏导航">
+        <button data-tab="0" aria-current="page"><span aria-hidden="true">◈</span>概览</button>
+        <button data-tab="1"><span aria-hidden="true">◎</span>居民</button>
+        <button data-tab="2"><span aria-hidden="true">▤</span>建筑</button>
+        <button data-tab="3"><span aria-hidden="true">≡</span>任务</button>
+        <button data-tab="4"><span aria-hidden="true">▣</span>背包</button>
+        <button data-tab="8"><span aria-hidden="true">⌖</span>探索/战斗</button>
+        <button data-tab="5"><span aria-hidden="true">◇</span>派系</button>
+        <button data-tab="6"><span aria-hidden="true">△</span>危机</button>
+        <button data-tab="7"><span aria-hidden="true">◉</span>AI</button>
+      </nav>
+      <details class="game-controls" open>
+        <summary>进度管理</summary>
+        <button id="saveBtn" data-action="save" disabled>保存当前进度</button>
+        <button id="loadBtn" data-action="load">读取历史存档</button>
+        <button id="autoplayBtn" data-action="autoplay">开启自动游玩</button>
+        <button id="newGameBtn" data-action="newgame">开启全新游戏</button>
+      </details>
+      <p id="saveState" class="save-state"></p>
+    </aside>
+
+    <main id="main-content" tabindex="-1">
+      <div id="resbar" class="resource-strip" aria-label="当前物资"></div>
+      <div class="dashboard">
+        <section class="stage">
+          <header class="page-header">
+            <h1 id="pageTitle">正在接入档案城</h1>
+            <p id="pageContext"></p>
+          </header>
+          <a id="openGame" href="/" target="_blank" rel="noopener" hidden>在独立窗口打开游戏</a>
+          <p id="actionFeedback" class="feedback" role="status" aria-live="polite"></p>
+          <div id="page"></div>
+        </section>
+        <aside class="intel" aria-label="当前进度与城镇动态">
+          <section id="briefing" class="panel briefing"></section>
+          <section class="panel events">
+            <header><h2>行动记录</h2><span id="eventCount"></span></header>
+            <ol id="log"></ol>
+          </section>
+        </aside>
+      </div>
+    </main>
+  </div>
+
+  <dialog id="diaryModal" class="modal" aria-labelledby="dialogHeading">
+    <div class="modal-header">
+      <h2 id="dialogHeading"></h2>
+      <form method="dialog"><button aria-label="关闭">关闭</button></form>
+    </div>
+    <div id="dialogContent"></div>
+  </dialog>
+</body>
+</html>

@@ -126,6 +126,13 @@ namespace LastArchive
             PrintHeader("白 天 - 基 地 经 营");
 
             ShowResources();
+            var supply = _game.Time.GetSupplyForecast().Where(item => item.Used > 0);
+            Console.WriteLine("  结算预计: " + string.Join(" · ", supply.Select(item =>
+                $"{GameConfig.ResourceNames[(int)item.Type]}{(item.Shortfall > 0 ? $"短缺 {item.Shortfall}" : $"余 {item.Reserve}")}")));
+            var active = _game.Quests.GetActiveQuests().Find(quest => quest.Type == QuestType.MainQuest);
+            if (active != null) Console.WriteLine($"  当前主线: {active.Title}");
+            if (_game.MarketCapacity > 0) Console.WriteLine($"  M. 集市交换 · 今日剩余 {_game.MarketTradesLeft} 次");
+            if (_game.CanChooseEnding) Console.WriteLine("  E. 决定记忆的去向");
             Console.WriteLine();
 
             Console.WriteLine("  ╔══════════════════════════════╗");
@@ -161,6 +168,10 @@ namespace LastArchive
                     else Console.WriteLine("  保存失败！");
                     Pause();
                     break;
+                case "M":
+                case "m": ShowMarket(); break;
+                case "E":
+                case "e": ShowEndingChoice(); break;
                 case "0": _game.Time.AdvanceToNight(); break;
             }
             // 如果正在探索
@@ -218,13 +229,13 @@ namespace LastArchive
             Console.WriteLine();
 
             // 检查游戏结束
-            _game.CheckGameOver();
+            _game.OnDayEnd();
 
             if (!_game.IsGameOver)
             {
                 Console.WriteLine("  按任意键进入新的一天...");
                 Console.ReadKey();
-                _game.Time.AdvanceToNextDay();
+                _game.AdvanceDay();
             }
         }
 
@@ -257,7 +268,7 @@ namespace LastArchive
                 var available = _game.NPCs.GetExplorableNPCs();
                 for (int i = 0; i < available.Count; i++)
                 {
-                    Console.WriteLine($"  {i + 1}. {available[i].Name} (战斗:{available[i].Combat} 搜集:{available[i].Scavenging})");
+                    Console.WriteLine($"  {i + 1}. {available[i].Name} (战斗:{available[i].Combat} 搜集:{available[i].Scavenging} 疲劳:{available[i].Fatigue})");
                 }
 
                 Console.Write("  输入队员编号 (用逗号分隔): ");
@@ -290,7 +301,6 @@ namespace LastArchive
                 {
                     Console.WriteLine($"\n  探索队出发！前往{map.Name}...");
                     // 更新访问地点目标
-                    _game.Quests.UpdateVisitLocationObjectives(map.Id);
                     Pause();
                 }
                 else
@@ -385,7 +395,6 @@ namespace LastArchive
                             if (_game.Exploration.MoveToRoom(connected[roomIdx - 1].Id))
                             {
                                 Console.WriteLine($"  移动到 {_game.Exploration.CurrentRoom.Name}");
-                                _game.Quests.UpdateVisitLocationObjectives(_game.Exploration.CurrentRoom.Id);
                             }
                             else
                             {
@@ -860,6 +869,52 @@ namespace LastArchive
 
             Console.WriteLine($"  {_game.Achievements.GetStats()}");
             Pause();
+        }
+
+        private void ShowMarket()
+        {
+            if (_game.MarketCapacity == 0)
+            {
+                Console.WriteLine("  建造集市后可以交换物资。");
+                Pause();
+                return;
+            }
+            Console.WriteLine($"  今日剩余 {_game.MarketTradesLeft} 次交换");
+            for (int index = 0; index < GameManager.MarketOffers.Count; index++)
+            {
+                var offer = GameManager.MarketOffers[index];
+                Console.WriteLine($"  {index + 1}. {offer.Cost.Amount} {GameConfig.ResourceNames[(int)offer.Cost.Type]} → {offer.Reward.Amount} {GameConfig.ResourceNames[(int)offer.Reward.Type]}");
+            }
+            Console.Write("  选择兑换项，回车返回: ");
+            if (int.TryParse(Console.ReadLine(), out int selection) && selection >= 1 && selection <= GameManager.MarketOffers.Count)
+            {
+                Console.WriteLine(_game.Trade(GameManager.MarketOffers[selection - 1].Id) ? "  已完成交换。" : "  缺少物资或已用完今日额度。");
+                Pause();
+            }
+        }
+
+        private void ShowEndingChoice()
+        {
+            if (!_game.CanChooseEnding) return;
+            var choices = GameManager.EndingChoices;
+            var endings = _game.Endings.GetAllEndings();
+            for (int index = 0; index < choices.Count; index++)
+            {
+                var ending = endings.Find(entry => entry.Type == choices[index]);
+                var cost = ending.Type == EndingType.Upload ? $"（消耗 {GameConfig.UploadShardCost} 枚碎片）" : "";
+                Console.WriteLine($"  {index + 1}. {ending.Title} {cost}");
+            }
+            Console.Write("  选择结局，回车返回: ");
+            if (int.TryParse(Console.ReadLine(), out int selection) && selection >= 1 && selection <= choices.Count)
+            {
+                Console.Write("  确认结束这局游戏？(y/N) ");
+                if (string.Equals(Console.ReadLine(), "y", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (_game.ChooseEnding(choices[selection - 1])) _game.SaveGame();
+                    else Console.WriteLine("  当前无法选择该结局。");
+                    Pause();
+                }
+            }
         }
 
         // ========== 辅助方法 ==========

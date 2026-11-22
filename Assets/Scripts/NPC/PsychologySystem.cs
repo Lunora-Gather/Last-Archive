@@ -85,6 +85,12 @@ namespace LastArchive
             _states[npcId] = DeriveState(morale, loyalty, traits);
         }
 
+        internal void Restore(string npcId, MentalState state, MentalTrait traits)
+        {
+            _states[npcId] = state;
+            _traits[npcId] = traits;
+        }
+
         /// <summary>每日更新心理状态</summary>
         public void DailyUpdate(NPCInstance npc)
         {

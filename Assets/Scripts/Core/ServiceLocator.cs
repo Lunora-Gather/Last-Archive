@@ -8,11 +8,11 @@ using System.Collections.Generic;
 namespace LastArchive
 {
     /// <summary>
-    /// 简单服务定位器，用于管理全局系统实例
+    /// 当前游戏的服务定位器
     /// </summary>
     public static class ServiceLocator
     {
-        private static readonly Dictionary<Type, object> _services = new Dictionary<Type, object>();
+        private static Dictionary<Type, object> Services => GameScope.Current.Services;
 
         /// <summary>
         /// 注册服务
@@ -20,7 +20,7 @@ namespace LastArchive
         public static void Register<T>(T service) where T : class
         {
             var type = typeof(T);
-            _services[type] = service;
+            Services[type] = service;
         }
 
         /// <summary>
@@ -29,7 +29,7 @@ namespace LastArchive
         public static T Get<T>() where T : class
         {
             var type = typeof(T);
-            if (_services.TryGetValue(type, out var service))
+            if (Services.TryGetValue(type, out var service))
             {
                 return (T)service;
             }
@@ -41,7 +41,7 @@ namespace LastArchive
         /// </summary>
         public static bool Has<T>() where T : class
         {
-            return _services.ContainsKey(typeof(T));
+            return Services.ContainsKey(typeof(T));
         }
 
         /// <summary>
@@ -49,7 +49,7 @@ namespace LastArchive
         /// </summary>
         public static void Clear()
         {
-            _services.Clear();
+            Services.Clear();
         }
     }
 }

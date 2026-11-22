@@ -38,6 +38,8 @@ namespace LastArchive
         /// <summary>计算最终结局</summary>
         public EndingData CalculateEnding(GameManager game)
         {
+            if (game.ChosenEnding is { } selected)
+                return GetAllEndings().Find(ending => ending.Type == selected);
             var endings = new List<(EndingType type, int score, EndingData data)>();
 
             int shards = game.Resources.GetResourceAmount(ResourceType.MemoryShards);
@@ -121,7 +123,9 @@ namespace LastArchive
             }));
 
             // 消失结局：记忆风暴活跃 + 特殊条件
-            int vanishScore = shards > 30 ? 40 : 0;
+            bool hasMemoryStorm = game.Crises.ActiveCrises.Exists(crisis =>
+                !crisis.Resolved && crisis.Type == CrisisType.MemoryStorm);
+            int vanishScore = shards > 30 && hasMemoryStorm ? uploadScore + 10 : 0;
             endings.Add((EndingType.Vanish, vanishScore, new EndingData
             {
                 Type = EndingType.Vanish,

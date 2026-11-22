@@ -1,0 +1,7 @@
+.git
+**/bin
+**/obj
+**/node_modules
+ai_config.json
+save.json
+web-saves

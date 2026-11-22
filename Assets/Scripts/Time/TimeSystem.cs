@@ -3,6 +3,8 @@
 // ============================================================
 
 using System;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace LastArchive
 {
@@ -14,6 +16,7 @@ namespace LastArchive
         public int CurrentDay { get; private set; } = 1;
         public GamePhase CurrentPhase { get; private set; } = GamePhase.Day;
         public bool IsPaused { get; set; } = false;
+        public string LastNarrative { get; private set; }
 
         private ResourceSystem _resourceSystem;
         private NPCSystem _npcSystem;
@@ -40,6 +43,7 @@ namespace LastArchive
             CurrentDay = 1;
             CurrentPhase = GamePhase.Day;
             IsPaused = false;
+            LastNarrative = null;
             EventBus.Publish(new OnDayStarted { Day = CurrentDay });
         }
 
@@ -73,6 +77,29 @@ namespace LastArchive
             EventBus.Publish(new OnDayStarted { Day = CurrentDay });
         }
 
+        public sealed record SupplyForecast(ResourceType Type, int Stock, int Produced, int Used, int Reserve, int Shortfall);
+
+        public IReadOnlyList<SupplyForecast> GetSupplyForecast()
+        {
+            var operating = _buildingSystem.GetOperatingBuildings();
+            int population = _npcSystem.GetAliveCount();
+            var result = new List<SupplyForecast>();
+            foreach (var type in Enum.GetValues<ResourceType>())
+            {
+                int stock = _resourceSystem.GetResourceAmount(type);
+                int produced = operating.Sum(building => building.DailyOutput.Get(type) * building.Level);
+                int used = operating.Sum(building => building.DailyConsumption.Get(type)) + (type switch
+                {
+                    ResourceType.Food => population * GameConstants.DailyFoodConsumptionPerNPC,
+                    ResourceType.Water => population * GameConstants.DailyWaterConsumptionPerNPC,
+                    _ => 0
+                });
+                int balance = stock + produced - used;
+                result.Add(new SupplyForecast(type, stock, produced, used, Math.Max(0, balance), Math.Max(0, -balance)));
+            }
+            return result;
+        }
+
         /// <summary>每日结算</summary>
         public void TriggerDailySummary()
         {
@@ -81,11 +108,15 @@ namespace LastArchive
 
             // 2. 每日资源消耗
             int npcCount = _npcSystem.GetAliveCount();
-            int powerCost = _buildingSystem.GetDailyPowerConsumption();
-            _resourceSystem.ApplyDailyConsumption(npcCount, powerCost);
+            int foodNeed = npcCount * GameConstants.DailyFoodConsumptionPerNPC;
+            int waterNeed = npcCount * GameConstants.DailyWaterConsumptionPerNPC;
+            double foodCoverage = foodNeed == 0 ? 1 : Math.Min(1, (double)_resourceSystem.GetResourceAmount(ResourceType.Food) / foodNeed);
+            double waterCoverage = waterNeed == 0 ? 1 : Math.Min(1, (double)_resourceSystem.GetResourceAmount(ResourceType.Water) / waterNeed);
+            _resourceSystem.ApplyDailyConsumption(npcCount, buildingPowerCost: 0);
 
             // 3. NPC每日状态变化与关系演化
-            _npcSystem.ApplyDailyChanges();
+            int clinicRecovery = _buildingSystem.GetBuilding("med_room") is { Built: true } clinic ? 5 * clinic.Level : 0;
+            _npcSystem.ApplyDailyChanges(clinicRecovery, Math.Min(foodCoverage, waterCoverage));
             bool hasFoodCrisis = _resourceSystem.GetResourceAmount(ResourceType.Food) <= 0;
             bool hasWaterCrisis = _resourceSystem.GetResourceAmount(ResourceType.Water) <= 0;
             _npcSystem.UpdateNPCRelationships(hasFoodCrisis, hasWaterCrisis);
@@ -101,7 +132,7 @@ namespace LastArchive
             {
                 eventContext.ActiveQuests.Add(q.QuestId);
             }
-            string dailyEvent = _eventGenerator.Generate(eventContext);
+            LastNarrative = _eventGenerator.Generate(eventContext);
 
             // 5. NPC记忆总结
             foreach (var npc in _npcSystem.GetAllNPCs())

@@ -23,7 +23,7 @@ namespace LastArchive
         private static Language _lang = Language.Chinese;
         private static readonly Dictionary<string, string> _zh = new Dictionary<string, string>();
         private static readonly Dictionary<string, string> _en = new Dictionary<string, string>();
-        private static bool _initialized = false;
+        static I18n() => PopulateTranslations();
 
         /// <summary>当前语言</summary>
         public static Language CurrentLanguage
@@ -37,11 +37,10 @@ namespace LastArchive
         }
 
         /// <summary>初始化翻译字典</summary>
-        public static void Initialize()
-        {
-            if (_initialized) return;
-            _initialized = true;
+        public static void Initialize() { }
 
+        private static void PopulateTranslations()
+        {
             // === 游戏阶段 ===
             Add("phase.day", "白天", "Day");
             Add("phase.night", "夜晚", "Night");

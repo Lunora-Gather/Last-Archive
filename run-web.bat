@@ -1,7 +1,7 @@
 @echo off
 set "PATH=C:\Program Files\dotnet;%PATH%"
 cd /d "%~dp0"
-dotnet build
+dotnet build --framework net10.0
 if %ERRORLEVEL% NEQ 0 (
     echo BUILD FAILED
     pause
@@ -9,5 +9,5 @@ if %ERRORLEVEL% NEQ 0 (
 )
 echo.
 echo Starting web server at http://localhost:8080
-dotnet run -- --web
+dotnet run --no-build --framework net10.0 -- --web
 pause

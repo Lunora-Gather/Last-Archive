@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LastArchive
 {
@@ -42,7 +43,7 @@ namespace LastArchive
         public bool Build(string buildingId)
         {
             var building = GetBuilding(buildingId);
-            if (building == null || building.Built) return false;
+            if (building == null || !building.Unlocked || building.Built) return false;
             if (!_resourceSystem.HasEnoughBundle(building.BuildCost)) return false;
 
             _resourceSystem.ConsumeBundle(building.BuildCost);
@@ -65,26 +66,29 @@ namespace LastArchive
             return true;
         }
 
+        internal IReadOnlyList<BuildingInstance> GetOperatingBuildings()
+        {
+            var available = _resourceSystem.GetAllResources();
+            var operating = new List<BuildingInstance>();
+            foreach (var building in _buildings.Values)
+            {
+                if (!building.Built || building.DailyConsumption.Amounts.Any(cost => available[cost.Type] < cost.Amount))
+                    continue;
+                foreach (var cost in building.DailyConsumption.Amounts) available[cost.Type] -= cost.Amount;
+                foreach (var output in building.DailyOutput.Amounts) available[output.Type] += output.Amount * building.Level;
+                operating.Add(building);
+            }
+            return operating;
+        }
+
         /// <summary>每日产出资源</summary>
         public void ProduceDailyResources()
         {
-            foreach (var building in _buildings.Values)
+            foreach (var building in GetOperatingBuildings())
             {
-                if (!building.Built) continue;
-
-                // 检查消耗是否足够
-                if (building.DailyConsumption.Amounts.Count > 0)
-                {
-                    if (!_resourceSystem.HasEnoughBundle(building.DailyConsumption)) continue;
-                    _resourceSystem.ConsumeBundle(building.DailyConsumption);
-                }
-
-                // 产出（根据等级缩放）
+                _resourceSystem.ConsumeBundle(building.DailyConsumption);
                 foreach (var output in building.DailyOutput.Amounts)
-                {
-                    int amount = output.Amount * building.Level;
-                    _resourceSystem.AddResource(output.Type, amount);
-                }
+                    _resourceSystem.AddResource(output.Type, output.Amount * building.Level);
             }
         }
 

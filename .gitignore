@@ -5,6 +5,7 @@
 # User configurations & data
 ai_config.json
 save.json
+web-saves/
 
 # IDE settings
 .vs/

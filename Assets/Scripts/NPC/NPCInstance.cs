@@ -95,6 +95,7 @@ namespace LastArchive
         public bool CanWork => IsAlive && Status != NPCStatus.Injured && Status != NPCStatus.Missing;
 
         /// <summary>是否可探索</summary>
-        public bool CanExplore => IsAlive && Status != NPCStatus.Injured && Status != NPCStatus.Missing && Status != NPCStatus.Working;
+        public bool CanExplore => IsAlive && Status != NPCStatus.Injured && Status != NPCStatus.Missing &&
+            Status != NPCStatus.Working && Fatigue < GameConfig.ExpeditionFatigueLimit;
     }
 }

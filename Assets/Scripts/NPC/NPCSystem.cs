@@ -126,14 +126,15 @@ namespace LastArchive
         }
 
         /// <summary>应用每日NPC状态变化</summary>
-        public void ApplyDailyChanges()
+        public void ApplyDailyChanges(int clinicRecovery = 0, double rationCoverage = 1)
         {
             foreach (var npc in _npcs.Values)
             {
                 if (!npc.IsAlive) continue;
 
-                // 饥饿增加
-                npc.Hunger = Math.Min(GameConfig.MaxNPCHunger, npc.Hunger + GameConfig.DailyHungerIncrease);
+                // 配给足够时恢复。短缺时按食物和饮水中较紧缺的一项计算。
+                int hungerChange = (int)Math.Round(GameConfig.DailyHungerIncrease * (1 - 2 * rationCoverage));
+                npc.Hunger = Math.Clamp(npc.Hunger + hungerChange, 0, GameConfig.MaxNPCHunger);
 
                 // 疲劳增加（工作中增加更多）
                 int fatigueAdd = npc.Status == NPCStatus.Working
@@ -153,10 +154,10 @@ namespace LastArchive
                     npc.Loyalty = Math.Max(0, npc.Loyalty - GameConfig.LowMoraleLoyaltyPenalty);
                 }
 
-                // 受伤NPC恢复（如果有药品）
+                // 受伤居民自然恢复，已建医疗室提供额外恢复。
                 if (npc.Status == NPCStatus.Injured && npc.Health > 0)
                 {
-                    npc.Health = Math.Min(GameConfig.MaxNPCHealth, npc.Health + 2);
+                    npc.Health = Math.Min(GameConfig.MaxNPCHealth, npc.Health + 2 + clinicRecovery);
                     if (npc.Health >= 30)
                     {
                         npc.Status = NPCStatus.Idle;
@@ -167,7 +168,7 @@ namespace LastArchive
                 // 休息恢复疲劳和士气
                 if (npc.Status == NPCStatus.Idle)
                 {
-                    npc.Fatigue = Math.Max(0, npc.Fatigue - 10);
+                    npc.Fatigue = Math.Max(0, npc.Fatigue - 19);
                     npc.Morale = Math.Min(GameConfig.MaxNPCMorale, npc.Morale + 2);
                 }
             }

@@ -20,10 +20,7 @@ namespace LastArchive
             {
                 try
                 {
-                    var web = new WebGameServer();
-                    var html = (string)web.GetType()
-                        .GetMethod("GetIndexHtml", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
-                        .Invoke(web, null);
+                    var html = WebGamePage.GetIndexHtml(standalone: true);
                     System.IO.File.WriteAllText("index_dump.html", html, System.Text.Encoding.UTF8);
                     Console.WriteLine("HTML dumped successfully to index_dump.html");
                 }
@@ -40,10 +37,11 @@ namespace LastArchive
                 try
                 {
                     var test = new AutoTest();
-                    test.RunAll();
+                    Environment.ExitCode = test.RunAll() ? 0 : 1;
                 }
                 catch (Exception ex)
                 {
+                    Environment.ExitCode = 1;
                     Console.WriteLine($"[测试错误] {ex.Message}\n{ex.StackTrace}");
                 }
                 return;
@@ -84,6 +82,7 @@ namespace LastArchive
                 }
                 catch (Exception ex)
                 {
+                    Environment.ExitCode = 1;
                     Console.WriteLine($"[Web错误] {ex.Message}\n{ex.StackTrace}");
                 }
                 return;

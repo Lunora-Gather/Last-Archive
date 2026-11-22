@@ -52,6 +52,7 @@ namespace LastArchive
         /// <summary>开始战斗</summary>
         public bool StartCombat(List<string> playerNPCIds, List<string> enemyIds)
         {
+            if (InCombat || playerNPCIds == null || enemyIds == null) return false;
             PlayerUnits.Clear();
             EnemyUnits.Clear();
             CombatLog.Clear();
@@ -156,6 +157,9 @@ namespace LastArchive
                 return InCombat ? null : result;
             }
 
+            // 防御持续到该队员下一次行动，跨越时间轴起点。
+            attacker.IsDefending = false;
+
             // 流血结算
             if (attacker.BleedTurns > 0)
             {
@@ -240,12 +244,10 @@ namespace LastArchive
                         var item = inv.Find(i => i.Id == itemId);
                         if (item != null && item.IsConsumable)
                         {
-                            if (_itemSystem.UseConsumable(itemId, attacker.Id))
+                            if (_itemSystem.UseConsumable(itemId, attacker.Id, applyHealing: false))
                             {
                                 CombatLog.AppendLine($"{attacker.Name} 使用了 [{item.Name}]！");
-                                // 刷新生命值
-                                var npc = _npcSystem.GetNPC(attacker.Id);
-                                if (npc != null) attacker.Hp = npc.Health;
+                                attacker.Hp = Math.Min(attacker.MaxHp, attacker.Hp + item.HealAmount);
                             }
                             else
                             {
@@ -343,6 +345,7 @@ namespace LastArchive
                 // 随机攻击一个玩家队员
                 var target = alivePlayers[_rng.Next(alivePlayers.Count)];
                 int totalDefense = target.Defense + target.BuffDefense;
+                target.BuffDefense = 0;
                 int damage = Math.Max(1, attacker.Attack - totalDefense / 2);
                 if (target.IsDefending)
                 {
@@ -487,16 +490,7 @@ namespace LastArchive
             }
 
             CurrentTimelineIndex++;
-            if (CurrentTimelineIndex >= ActionTimeline.Count)
-            {
-                CurrentTimelineIndex = 0;
-                // 新回合开始，减少防御盾Buff
-                foreach (var unit in ActionTimeline)
-                {
-                    unit.IsDefending = false;
-                    unit.BuffDefense = 0;
-                }
-            }
+            if (CurrentTimelineIndex >= ActionTimeline.Count) CurrentTimelineIndex = 0;
 
             var nextUnit = ActiveUnit;
             if (nextUnit == null || nextUnit.IsDead)

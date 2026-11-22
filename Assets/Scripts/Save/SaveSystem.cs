@@ -30,6 +30,29 @@ namespace LastArchive
         public List<FactionSaveData> Factions { get; set; } = new List<FactionSaveData>();
         public List<string> UnlockedAchievements { get; set; } = new List<string>();
         public string SaveTime { get; set; }
+        public int? LastSettledDay { get; set; }
+        public int StarvationDays { get; set; }
+        public int TotalDaysSurvived { get; set; }
+        public int TotalExplorationsCompleted { get; set; }
+        public int TotalCombatsWon { get; set; }
+        public bool IsGameOver { get; set; }
+        public bool IsVictory { get; set; }
+        public string LastDailyEvent { get; set; }
+        public EndingType? ChosenEnding { get; set; }
+        public int MarketDay { get; set; }
+        public int MarketTrades { get; set; }
+        public Dictionary<string, int> LocationVisits { get; set; } = new();
+        public List<RoomSaveData> Rooms { get; set; } = new();
+        public List<CrisisInstance> Crises { get; set; } = new();
+        public Dictionary<string, int> AchievementDays { get; set; } = new();
+    }
+
+    public class RoomSaveData
+    {
+        public string MapId { get; set; }
+        public string RoomId { get; set; }
+        public bool Visited { get; set; }
+        public bool Locked { get; set; }
     }
 
     [Serializable]
@@ -50,6 +73,10 @@ namespace LastArchive
         public int Loyalty { get; set; }
         public NPCStatus Status { get; set; }
         public WorkType CurrentWork { get; set; }
+        public string WeaponId { get; set; }
+        public string ArmorId { get; set; }
+        public MentalState? MentalState { get; set; }
+        public MentalTrait? MentalTraits { get; set; }
         public List<NPCRelationship> Relationships { get; set; } = new List<NPCRelationship>();
         public List<MemoryEntry> MemoryEntries { get; set; } = new List<MemoryEntry>();
         public string MemorySummary { get; set; }
@@ -89,6 +116,7 @@ namespace LastArchive
         public ResourceType? ResourceType { get; set; }
         public int ResourceAmount { get; set; }
         public string Source { get; set; }
+        public int? RequiredLevel { get; set; }
     }
 
     [Serializable]
@@ -105,6 +133,11 @@ namespace LastArchive
     public class SaveSystem
     {
         private readonly string _savePath;
+        private static readonly JsonSerializerOptions JsonOptions = new()
+        {
+            WriteIndented = true,
+            Converters = { new JsonStringEnumConverter() }
+        };
 
         public SaveSystem(string savePath = null)
         {
@@ -188,7 +221,7 @@ namespace LastArchive
                         AttackBonus = item.AttackBonus, DefenseBonus = item.DefenseBonus,
                         HealthBonus = item.HealthBonus, HealAmount = item.HealAmount,
                         MoraleBoost = item.MoraleBoost, ResourceType = item.ResourceType,
-                        ResourceAmount = item.ResourceAmount, Source = item.Source
+                        ResourceAmount = item.ResourceAmount, Source = item.Source, RequiredLevel = item.RequiredLevel
                     });
                 }
             }
@@ -213,6 +246,7 @@ namespace LastArchive
                 foreach (var ach in achievementSystem.GetUnlockedAchievements())
                 {
                     data.UnlockedAchievements.Add(ach.Id);
+                    data.AchievementDays[ach.Id] = ach.UnlockedDay;
                 }
             }
 
@@ -222,21 +256,32 @@ namespace LastArchive
         /// <summary>保存游戏</summary>
         public bool SaveGame(SaveData data)
         {
+            var path = Path.GetFullPath(_savePath);
+            var temporaryPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
             try
             {
-                var options = new JsonSerializerOptions
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                using (var stream = new FileStream(temporaryPath, FileMode.CreateNew))
                 {
-                    WriteIndented = true,
-                    Converters = { new JsonStringEnumConverter() }
-                };
-                string json = JsonSerializer.Serialize(data, options);
-                File.WriteAllText(_savePath, json);
+                    JsonSerializer.Serialize(stream, data, JsonOptions);
+                    stream.Flush(flushToDisk: true);
+                }
+                File.Move(temporaryPath, path, overwrite: true);
                 return true;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[SaveSystem] 保存失败: {ex.Message}");
                 return false;
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    try { File.Delete(temporaryPath); }
+                    catch (IOException ex) { Console.WriteLine($"[SaveSystem] 无法清理临时存档: {ex.Message}"); }
+                    catch (UnauthorizedAccessException ex) { Console.WriteLine($"[SaveSystem] 无法清理临时存档: {ex.Message}"); }
+                }
             }
         }
 
@@ -246,12 +291,20 @@ namespace LastArchive
             try
             {
                 if (!HasSave()) return null;
-                string json = File.ReadAllText(_savePath);
-                var options = new JsonSerializerOptions
+                using var stream = File.OpenRead(_savePath);
+                var data = JsonSerializer.Deserialize<SaveData>(stream, JsonOptions);
+                if (data == null || data.CurrentDay < 1 || !Enum.IsDefined(data.CurrentPhase) ||
+                    data.Resources == null || data.NPCStates == null ||
+                    data.BuildingStates == null || data.QuestStates == null ||
+                    data.Resources.Exists(entry => entry == null) ||
+                    data.NPCStates.Exists(entry => string.IsNullOrEmpty(entry?.Id)) ||
+                    data.BuildingStates.Exists(entry => string.IsNullOrEmpty(entry?.Id)) ||
+                    data.QuestStates.Exists(entry => string.IsNullOrEmpty(entry?.QuestId)) ||
+                    data.Items?.Exists(entry => string.IsNullOrEmpty(entry?.Id)) == true)
                 {
-                    Converters = { new JsonStringEnumConverter() }
-                };
-                return JsonSerializer.Deserialize<SaveData>(json, options);
+                    return null;
+                }
+                return data;
             }
             catch (Exception ex)
             {

@@ -1,8 +1,14 @@
 # Last Archive - AI 系统接入说明
 
-## 当前状态
+## 网页试玩
 
-MVP 阶段使用 `MockAIProvider`，纯本地模板生成，不依赖任何外部 API。
+网页固定使用 `MockAIProvider`。浏览器只能查询当前提供者，网页拒绝保存或测试第三方配置。
+
+## 终端版
+
+新游戏启动时，在 AI 提供者菜单中选择 GLM、DeepSeek、Ollama 或自定义 OpenAI 兼容服务。也可以通过菜单读取本地 `ai_config.json`，或使用 `LAST_ARCHIVE_API_KEY`、`LAST_ARCHIVE_BASE_URL` 和 `LAST_ARCHIVE_MODEL` 环境变量。
+
+`OpenAIProvider` 调用 OpenAI 兼容的聊天接口，网络或接口错误时回退到本地模板。终端版的 API 密钥应只放在本机配置或进程环境变量中。
 
 ## IAIProvider 接口
 
@@ -17,50 +23,7 @@ public interface IAIProvider
 }
 ```
 
-## 接入 GLM 5.2 的步骤
-
-### 1. 创建 GLMProvider
-
-```csharp
-public class GLMProvider : IAIProvider
-{
-    public string Name => "GLM5.2";
-    private string _apiKey;
-    private string _apiUrl;
-
-    public GLMProvider(string apiKey, string apiUrl)
-    {
-        _apiKey = apiKey;
-        _apiUrl = apiUrl;
-    }
-
-    public string GenerateDialogue(DialogueContext context)
-    {
-        string prompt = new PromptBuilder().BuildDialoguePrompt(context);
-        string response = CallGLMAPI(prompt);
-        return response;
-    }
-
-    // ... 其他方法类似
-
-    private string CallGLMAPI(string prompt)
-    {
-        // HTTP 调用 GLM API
-        // 返回 JSON 响应
-    }
-}
-```
-
-### 2. 替换 Provider
-
-```csharp
-// 在 GameManager.Initialize() 中
-var aiProvider = new GLMProvider(apiKey, apiUrl);
-// 或 fallback 到 MockAI
-var aiProvider = useGLM ? new GLMProvider(key, url) : new MockAIProvider();
-```
-
-### 3. AI 输出格式要求
+## AI 输出格式要求
 
 #### 对话输出
 纯文本，直接显示。

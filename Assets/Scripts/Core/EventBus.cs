@@ -8,11 +8,11 @@ using System.Collections.Generic;
 namespace LastArchive
 {
     /// <summary>
-    /// 全局事件总线，用于系统间解耦通信
+    /// 当前游戏的事件总线
     /// </summary>
     public static class EventBus
     {
-        private static readonly Dictionary<Type, List<Delegate>> _subscribers = new Dictionary<Type, List<Delegate>>();
+        private static Dictionary<Type, List<Delegate>> Subscribers => GameScope.Current.Subscribers;
 
         /// <summary>
         /// 订阅事件
@@ -20,11 +20,11 @@ namespace LastArchive
         public static void Subscribe<T>(Action<T> handler) where T : struct
         {
             var type = typeof(T);
-            if (!_subscribers.ContainsKey(type))
+            if (!Subscribers.ContainsKey(type))
             {
-                _subscribers[type] = new List<Delegate>();
+                Subscribers[type] = new List<Delegate>();
             }
-            _subscribers[type].Add(handler);
+            Subscribers[type].Add(handler);
         }
 
         /// <summary>
@@ -33,9 +33,9 @@ namespace LastArchive
         public static void Unsubscribe<T>(Action<T> handler) where T : struct
         {
             var type = typeof(T);
-            if (_subscribers.ContainsKey(type))
+            if (Subscribers.ContainsKey(type))
             {
-                _subscribers[type].Remove(handler);
+                Subscribers[type].Remove(handler);
             }
         }
 
@@ -45,9 +45,9 @@ namespace LastArchive
         public static void Publish<T>(T eventData) where T : struct
         {
             var type = typeof(T);
-            if (_subscribers.ContainsKey(type))
+            if (Subscribers.ContainsKey(type))
             {
-                foreach (var handler in _subscribers[type].ToArray())
+                foreach (var handler in Subscribers[type].ToArray())
                 {
                     ((Action<T>)handler)(eventData);
                 }
@@ -59,7 +59,7 @@ namespace LastArchive
         /// </summary>
         public static void Clear()
         {
-            _subscribers.Clear();
+            Subscribers.Clear();
         }
     }
 
@@ -104,9 +104,11 @@ namespace LastArchive
     /// <summary>探索开始</summary>
     public struct OnExplorationStarted { public string MapId; }
 
+    public struct OnExplorationRoomEntered { public string RoomId; }
+
     /// <summary>探索结束</summary>
     public struct OnExplorationEnded { public string MapId; public bool Success; }
 
     /// <summary>游戏结束</summary>
-    public struct OnGameOver { public string Reason; }
+    public struct OnGameOver { public string Reason; public bool Victory; }
 }

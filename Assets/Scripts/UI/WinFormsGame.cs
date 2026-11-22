@@ -23,15 +23,15 @@ namespace LastArchive
         private bool _autoPlaying = false;
 
         // 颜色
-        static readonly Color BG = Color.FromArgb(18, 18, 28);
-        static readonly Color PANEL = Color.FromArgb(30, 30, 45);
-        static readonly Color ACCENT = Color.FromArgb(80, 180, 255);
-        static readonly Color ACCENT2 = Color.FromArgb(255, 180, 60);
-        static readonly Color DANGER = Color.FromArgb(255, 80, 80);
-        static readonly Color SUCCESS = Color.FromArgb(80, 255, 120);
-        static readonly Color TEXT = Color.FromArgb(220, 220, 230);
-        static readonly Color TEXT_DIM = Color.FromArgb(140, 140, 160);
-        static readonly Color BTN_BG = Color.FromArgb(50, 50, 70);
+        static readonly Color BG = Color.FromArgb(19, 22, 24);
+        static readonly Color PANEL = Color.FromArgb(27, 31, 34);
+        static readonly Color ACCENT = Color.FromArgb(233, 179, 119);
+        static readonly Color ACCENT2 = Color.FromArgb(238, 196, 146);
+        static readonly Color DANGER = Color.FromArgb(243, 163, 149);
+        static readonly Color SUCCESS = Color.FromArgb(156, 197, 170);
+        static readonly Color TEXT = Color.FromArgb(242, 238, 231);
+        static readonly Color TEXT_DIM = Color.FromArgb(169, 176, 179);
+        static readonly Color BTN_BG = Color.FromArgb(36, 42, 46);
         static readonly Color BTN_HOVER = Color.FromArgb(70, 70, 100);
         private void InitUI()
         {
@@ -74,6 +74,8 @@ namespace LastArchive
                 new ToolStripMenuItem("🔄 刷新", null, (s,e)=>RefreshCurrentTab()),
                 new ToolStripMenuItem("🤖 自动游玩", null, (s,e)=>ToggleAutoPlay()),
                 new ToolStripMenuItem("🆕 新游戏", null, (s,e)=>DoNewGame()),
+                new ToolStripMenuItem("集市交换", null, (s,e)=>ShowMarketChoice()),
+                new ToolStripMenuItem("记忆的去向", null, (s,e)=>ShowEndingChoice()),
                 new ToolStripMenuItem("📊 终局统计", null, (s,e)=>ShowEndStats()),
             });
             menu.Items.Add(miAct);
@@ -177,6 +179,15 @@ namespace LastArchive
             L(page, $"已完成任务: {completed}", 10, y, 11, false, TEXT); y += 24;
             L(page, $"总探索: {_game.TotalExplorationsCompleted}  总战斗胜场: {_game.TotalCombatsWon}", 10, y, 11, false, TEXT); y += 40;
 
+            string forecast = string.Join("　", _game.Time.GetSupplyForecast().Where(item => item.Used > 0)
+                .Select(item => $"{GameConfig.ResourceNames[(int)item.Type]}{(item.Shortfall > 0 ? $"短缺 {item.Shortfall}" : $"余 {item.Reserve}")}"));
+            L(page, "今日补给预测　" + forecast, 10, y, 11, true, ACCENT); y += 27;
+            var mission = _game.Quests.GetActiveQuests().FirstOrDefault(quest => quest.Type == QuestType.MainQuest);
+            if (mission != null)
+            {
+                L(page, "当前主线　" + mission.Title, 10, y, 11, false, TEXT); y += 27;
+            }
+
             L(page, "📦 资源", 10, y, 14, true, ACCENT2); y += 30;
             ResBar(page, "食物", _game.Resources.GetResourceAmount(ResourceType.Food), 100, 10, ref y);
             ResBar(page, "水", _game.Resources.GetResourceAmount(ResourceType.Water), 100, 10, ref y);
@@ -206,7 +217,7 @@ namespace LastArchive
                 L(page, $"{st} {npc.Name} ({npc.Role})", 10, y, 13, true, nc); y += 22;
                 if (npc.IsAlive)
                 {
-                    L(page, $"  HP:{npc.Health}  士气:{npc.Morale}  忠诚:{npc.Loyalty}  饥饿:{npc.Hunger}", 10, y, 10, false, TEXT_DIM); y += 20;
+                    L(page, $"  HP:{npc.Health}  士气:{npc.Morale}  忠诚:{npc.Loyalty}  饥渴:{npc.Hunger}  疲劳:{npc.Fatigue}", 10, y, 10, false, TEXT_DIM); y += 20;
                     var mental = _game.Psychology.GetState(npc.Id);
                     Color mc = mental == MentalState.Hopeful ? SUCCESS : mental == MentalState.Despair || mental == MentalState.Traumatized ? DANGER : mental == MentalState.Anxious ? ACCENT2 : TEXT;
                     L(page, $"  心理: {_game.Psychology.GetStateName(mental)}  工作: {npc.CurrentWork}", 10, y, 10, false, mc); y += 22;
@@ -646,15 +657,13 @@ namespace LastArchive
 
         private void DoNextDay()
         {
-            // 完整一天：白天→夜晚→结算
-            if (_game.Time.CurrentPhase == GamePhase.Day)
+            int settledDay = _game.Time.CurrentDay;
+            if (!_game.AdvanceDay())
             {
-                _game.Time.AdvanceToNight();
-                AddLog("🌙 进入夜晚...");
+                AddLog("请先完成当前探索或战斗。");
+                return;
             }
-            _game.Time.AdvanceToSummary();
-            _game.OnDayEnd();
-            AddLog($"── 第{_game.Time.CurrentDay}天结算完成 ──");
+            AddLog($"── 第{settledDay}天结算完成 ──");
             Beep(600, 150);
 
             // 显示每日事件
@@ -700,6 +709,64 @@ namespace LastArchive
         }
 
         // ═══════════════ 新功能 ═══════════════
+
+        private void ShowMarketChoice()
+        {
+            if (_game.MarketTradesLeft == 0)
+            {
+                MessageBox.Show(this, "建造集市后可交换物资。额度每天恢复。", "集市");
+                return;
+            }
+            var offers = GameManager.MarketOffers;
+            var descriptions = offers.Select(offer =>
+                $"{offer.Cost.Amount} {GameConfig.ResourceNames[(int)offer.Cost.Type]} → {offer.Reward.Amount} {GameConfig.ResourceNames[(int)offer.Reward.Type]}");
+            int selection = ChooseOption($"集市 · 剩余 { _game.MarketTradesLeft } 次", descriptions);
+            if (selection >= 0)
+            {
+                AddLog(_game.Trade(offers[selection].Id) ? "已完成交换。" : "缺少交换物资，或需要先返回基地。");
+                RefreshCurrentTab();
+            }
+        }
+
+        private void ShowEndingChoice()
+        {
+            if (!_game.CanChooseEnding)
+            {
+                MessageBox.Show(this, "修复广播塔并返回基地后可做出选择。", "记忆的去向");
+                return;
+            }
+            var choices = GameManager.EndingChoices;
+            var endings = _game.Endings.GetAllEndings();
+            var descriptions = choices.Select(type => endings.Find(ending => ending.Type == type).Title +
+                (type == EndingType.Upload ? $" · {GameConfig.UploadShardCost} 枚碎片" : ""));
+            int selection = ChooseOption("选择本局结局", descriptions);
+            if (selection < 0) return;
+            if (!_game.ChooseEnding(choices[selection]))
+            {
+                MessageBox.Show(this, "目前无法选择这个结局。", "记忆的去向");
+                return;
+            }
+            _game.SaveGame();
+            var result = _game.Endings.CalculateEnding(_game);
+            MessageBox.Show(this, result.Epilogue, result.Title);
+            RefreshCurrentTab();
+        }
+
+        private int ChooseOption(string title, IEnumerable<string> choices)
+        {
+            using var dialog = new Form { Text = title, ClientSize = new Size(360, 110),
+                FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
+                MinimizeBox = false, MaximizeBox = false };
+            var list = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(14, 15), Width = 332 };
+            list.Items.AddRange(choices.Cast<object>().ToArray());
+            list.SelectedIndex = 0;
+            var confirm = new Button { Text = "确认", Location = new Point(177, 58), DialogResult = DialogResult.OK };
+            var cancel = new Button { Text = "取消", Location = new Point(257, 58), DialogResult = DialogResult.Cancel };
+            dialog.Controls.AddRange(new Control[] { list, confirm, cancel });
+            dialog.AcceptButton = confirm;
+            dialog.CancelButton = cancel;
+            return dialog.ShowDialog(this) == DialogResult.OK ? list.SelectedIndex : -1;
+        }
 
         private void DoLoad()
         {

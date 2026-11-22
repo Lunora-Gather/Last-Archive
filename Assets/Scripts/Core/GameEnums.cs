@@ -194,7 +194,7 @@ namespace LastArchive
         public const int BuildingUpgradePowerBase = 3;
 
         // 存档版本
-        public const string SaveVersion = "0.1.0";
+        public const string SaveVersion = "1.1.0";
 
         // 战斗逃跑成功率
         public const float EscapeSuccessRate = 0.5f;

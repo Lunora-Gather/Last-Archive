@@ -5,6 +5,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LastArchive
 {
@@ -53,6 +54,9 @@ namespace LastArchive
         /// <summary>当前活跃危机</summary>
         public List<CrisisInstance> ActiveCrises => new List<CrisisInstance>(_activeCrises);
 
+        internal void Restore(IEnumerable<CrisisInstance> crises)
+            => _activeCrises = new List<CrisisInstance>(crises);
+
         /// <summary>是否有活跃危机</summary>
         public bool HasAnyCrisis => _activeCrises.Count > 0;
 
@@ -62,15 +66,12 @@ namespace LastArchive
             var sb = new System.Text.StringBuilder();
             int day = game.Time.CurrentDay;
 
-            // 饥荒危机：食物<人均3
-            int foodPerCap = game.NPCs.GetAliveCount() > 0
-                ? game.Resources.GetResourceAmount(ResourceType.Food) / game.NPCs.GetAliveCount()
-                : 999;
-
-            if (foodPerCap < 3 && !HasCrisisOfType(CrisisType.Famine))
+            var food = game.Time.GetSupplyForecast().First(entry => entry.Type == ResourceType.Food);
+            if (food.Shortfall > 0 && !HasCrisisOfType(CrisisType.Famine))
             {
-                var desc = TriggerCrisis(CrisisType.Famine, day, foodPerCap < 1 ? CrisisSeverity.Critical : CrisisSeverity.Active,
-                    foodPerCap < 1 ? "严重饥荒！食物储备告急！" : "食物短缺，居民们开始挨饿。");
+                bool severe = food.Shortfall * 2 >= game.NPCs.GetAliveCount();
+                var desc = TriggerCrisis(CrisisType.Famine, day, severe ? CrisisSeverity.Critical : CrisisSeverity.Active,
+                    severe ? "严重饥荒！下一轮食物配给无法保障。" : "下一轮食物配给不足。");
                 sb.AppendLine(desc);
 
                 // 饥荒可能连锁触发瘟疫（30%概率）
@@ -202,7 +203,7 @@ namespace LastArchive
                 switch (crisis.Type)
                 {
                     case CrisisType.Famine:
-                        if (game.Resources.GetResourceAmount(ResourceType.Food) >= game.NPCs.GetAliveCount() * 3)
+                        if (game.Time.GetSupplyForecast().First(entry => entry.Type == ResourceType.Food).Shortfall == 0)
                         {
                             canResolve = true;
                             how = "食物储备恢复，饥荒结束。";

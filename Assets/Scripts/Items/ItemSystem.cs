@@ -133,6 +133,7 @@ namespace LastArchive
         {
             if (_inventory.Count >= MaxInventorySize) return false;
 
+            if (!string.IsNullOrEmpty(source)) item.Source = source;
             _inventory.Add(item);
             EventBus.Publish(new OnItemAcquired { ItemId = item.Id, ItemName = item.Name, Source = source });
             return true;
@@ -174,6 +175,18 @@ namespace LastArchive
         public List<ItemInstance> GetInventory()
         {
             return new List<ItemInstance>(_inventory);
+        }
+
+        public bool HasItem(string itemId) => _inventory.Exists(item => item.Id == itemId);
+
+        internal string GetEquippedWeapon(string npcId) => _equippedWeapons.GetValueOrDefault(npcId);
+        internal string GetEquippedArmor(string npcId) => _equippedArmors.GetValueOrDefault(npcId);
+
+        internal void ClearInventory()
+        {
+            _inventory.Clear();
+            _equippedWeapons.Clear();
+            _equippedArmors.Clear();
         }
 
         /// <summary>获取背包中指定类型的物品</summary>
@@ -262,7 +275,7 @@ namespace LastArchive
         }
 
         /// <summary>使用消耗品</summary>
-        public bool UseConsumable(string itemId, string npcId)
+        public bool UseConsumable(string itemId, string npcId, bool applyHealing = true)
         {
             ItemInstance target = null;
             int targetIdx = -1;
@@ -280,10 +293,8 @@ namespace LastArchive
             // 应用效果
             var npc = _npcSystem.GetNPC(npcId);
 
-            if (target.HealAmount > 0 && npc != null)
-            {
-                npc.Health = Math.Min(GameConfig.MaxNPCHealth, npc.Health + target.HealAmount);
-            }
+            if (applyHealing && target.HealAmount > 0 && npc?.IsAlive == true)
+                _npcSystem.HealNPC(npcId, target.HealAmount);
 
             if (target.MoraleBoost > 0 && npc != null)
             {

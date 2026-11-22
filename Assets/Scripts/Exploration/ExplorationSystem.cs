@@ -56,9 +56,10 @@ namespace LastArchive
         public bool StartExploration(string mapId, List<string> teamNPCIds)
         {
             var map = GetMap(mapId);
-            if (map == null || !map.Unlocked) return false;
+            if (IsExploring || map == null || !map.Unlocked || map.Rooms.Count == 0) return false;
             if (teamNPCIds == null || teamNPCIds.Count == 0) return false;
-            if (teamNPCIds.Count > GameConfig.MaxExplorationTeamSize) return false;
+            if (teamNPCIds.Count > GameConfig.MaxExplorationTeamSize ||
+                new HashSet<string>(teamNPCIds).Count != teamNPCIds.Count) return false;
 
             // 验证队伍
             var psychology = ServiceLocator.Get<PsychologySystem>();
@@ -96,6 +97,7 @@ namespace LastArchive
             }
 
             EventBus.Publish(new OnExplorationStarted { MapId = mapId });
+            EventBus.Publish(new OnExplorationRoomEntered { RoomId = CurrentRoom.Id });
             return true;
         }
 
@@ -116,37 +118,16 @@ namespace LastArchive
                 if (room.Id == roomId)
                 {
                     // 检查锁定并尝试消耗钥匙解锁
-                    if (room.Locked && !string.IsNullOrEmpty(room.RequiredItem))
+                    if (room.Locked)
                     {
-                        if (_itemSystem != null)
-                        {
-                            bool hasKey = false;
-                            foreach (var item in _itemSystem.GetInventory())
-                            {
-                                if (item.Id == room.RequiredItem)
-                                {
-                                    hasKey = true;
-                                    break;
-                                }
-                            }
-                            if (hasKey)
-                            {
-                                _itemSystem.RemoveItem(room.RequiredItem);
-                                room.Locked = false;
-                            }
-                            else
-                            {
-                                return false;
-                            }
-                        }
-                        else
-                        {
+                        if (string.IsNullOrEmpty(room.RequiredItem) || _itemSystem?.RemoveItem(room.RequiredItem) != true)
                             return false;
-                        }
+                        room.Locked = false;
                     }
 
                     CurrentRoom = room;
                     CurrentRoom.Visited = true;
+                    EventBus.Publish(new OnExplorationRoomEntered { RoomId = room.Id });
                     return true;
                 }
             }
@@ -257,16 +238,16 @@ namespace LastArchive
         /// <summary>搜索当前房间</summary>
         public ExplorationEvent SearchRoom()
         {
-            if (!IsExploring || CurrentRoom == null) return null;
-            SearchedRooms.Add(CurrentRoom.Id);
+            if (!IsExploring || CurrentRoom == null || ActiveCheck != null ||
+                !SearchedRooms.Add(CurrentRoom.Id)) return null;
 
             var evt = new ExplorationEvent
             {
                 Id = Guid.NewGuid().ToString()
             };
 
-            // 30% 几率触发判定事件（仅在房间Danger > 2，且当前没有判定事件时）
-            if (CurrentRoom.DangerLevel > 2 && ActiveCheck == null && _rng.Next(100) < 30)
+            // 有固定剧情的房间优先执行其预设事件。
+            if (CurrentRoom.EventType == null && CurrentRoom.DangerLevel > 2 && _rng.Next(100) < 30)
             {
                 TriggerSkillCheck();
                 evt.Type = ExplorationEventType.TrapEvent;
@@ -275,23 +256,27 @@ namespace LastArchive
                 return evt;
             }
 
-            // 根据事件类型决定搜索结果
-            int roll = _rng.Next(100);
+            var eventType = CurrentRoom.EventType ?? (_rng.Next(100) switch
+            {
+                < 40 => ExplorationEventType.FindResources,
+                < 55 => ExplorationEventType.FindMemoryShard,
+                < 80 => ExplorationEventType.EnemyEncounter,
+                _ => ExplorationEventType.StoryEvent
+            });
 
-            if (CurrentRoom.EventType == ExplorationEventType.FindResources || roll < 40)
+            if (eventType == ExplorationEventType.FindResources)
             {
                 evt.Type = ExplorationEventType.FindResources;
                 evt.Description = $"在{CurrentRoom.Name}中发现了物资！";
 
-                foreach (var loot in CurrentRoom.LootTable)
+                var lootTable = CurrentRoom.LootTable.Count > 0
+                    ? CurrentRoom.LootTable
+                    : CurrentMap.MainLoot.ConvertAll(type => new ResourceAmount(type,
+                        type is ResourceType.Food or ResourceType.Water ? 6 : type == ResourceType.MemoryShards ? 1 : 4));
+                foreach (var loot in lootTable)
                 {
                     if (_rng.Next(100) < GameConfig.BaseSearchSuccessRate)
-                    {
-                        int amount = loot.Amount > 0 ? _rng.Next(1, loot.Amount + 1) : 1;
-                        evt.Rewards.Add(new ResourceAmount(loot.Type, amount));
-                        _resourceSystem.AddResource(loot.Type, amount);
-                        CurrentResult.CollectedResources.Add(new ResourceAmount(loot.Type, amount));
-                    }
+                        RecordLoot(evt, loot.Type, _rng.Next(1, Math.Max(1, loot.Amount) + 1));
                 }
 
                 if (_itemSystem != null && _rng.Next(100) < 20)
@@ -299,35 +284,46 @@ namespace LastArchive
                     var loot = _itemSystem.GenerateLoot(CurrentRoom.DangerLevel, _rng);
                     foreach (var item in loot)
                     {
-                        _itemSystem.AddItem(item, "探索掉落");
-                        evt.Description += $" 获得[{item.Name}]！";
+                        if (_itemSystem.AddItem(item, "探索掉落"))
+                            evt.Description += $" 获得[{item.Name}]！";
                     }
                 }
             }
-            else if (CurrentRoom.EventType == ExplorationEventType.FindMemoryShard || (roll >= 40 && roll < 55))
+            else if (eventType == ExplorationEventType.FindMemoryShard)
             {
                 evt.Type = ExplorationEventType.FindMemoryShard;
-                evt.Description = $"在{CurrentRoom.Name}中发现了一枚记忆碎片！";
-                _resourceSystem.AddResource(ResourceType.MemoryShards, 1);
-                evt.Rewards.Add(new ResourceAmount(ResourceType.MemoryShards, 1));
-                CurrentResult.CollectedResources.Add(new ResourceAmount(ResourceType.MemoryShards, 1));
+                int amount = CurrentRoom.MemoryShardReward;
+                evt.Description = $"在{CurrentRoom.Name}中发现了 {amount} 枚记忆碎片！";
+                RecordLoot(evt, ResourceType.MemoryShards, amount);
             }
-            else if (CurrentRoom.EventType == ExplorationEventType.EnemyEncounter || (roll >= 55 && roll < 80))
+            else if (eventType == ExplorationEventType.EnemyEncounter && CurrentMap.MainEnemies.Count > 0)
             {
                 evt.Type = ExplorationEventType.EnemyEncounter;
                 evt.Description = $"在{CurrentRoom.Name}遭遇了敌人！";
                 CurrentResult.HadCombat = true;
 
-                if (CurrentMap.MainEnemies.Count > 0)
-                {
-                    evt.EnemyId = CurrentMap.MainEnemies[_rng.Next(CurrentMap.MainEnemies.Count)];
-                }
+                evt.EnemyId = CurrentMap.MainEnemies[_rng.Next(CurrentMap.MainEnemies.Count)];
             }
             else
             {
                 evt.Type = ExplorationEventType.StoryEvent;
                 evt.Description = $"在{CurrentRoom.Name}中什么也没发现。";
             }
+
+            var itemId = CurrentRoom.SearchItemId;
+            if (!string.IsNullOrEmpty(itemId) && _itemSystem != null && !_itemSystem.HasItem(itemId))
+            {
+                var item = _itemSystem.GetTemplate(itemId);
+                if (item != null)
+                {
+                    evt.Description += _itemSystem.AddItemFromTemplate(itemId, "探索掉落")
+                        ? $" 获得[{item.Name}]！"
+                        : $" 背包空间不足，无法带走[{item.Name}]。";
+                }
+            }
+            if (evt.Type == ExplorationEventType.FindResources && evt.Rewards.Count == 0 &&
+                !evt.Description.Contains("获得[") && !evt.Description.Contains("背包"))
+                evt.Description = $"在{CurrentRoom.Name}中未找到可用物资。";
 
             // 危险房间可能受伤
             if (CurrentRoom.DangerLevel > 3 && _rng.Next(100) < GameConfig.DangerInjuryChance)
@@ -342,18 +338,26 @@ namespace LastArchive
             return evt;
         }
 
+        private void RecordLoot(ExplorationEvent evt, ResourceType type, int amount)
+        {
+            var loot = new ResourceAmount(type, amount);
+            evt.Rewards.Add(loot);
+            CurrentResult.CollectedResources.Add(loot);
+            _resourceSystem.AddResource(type, amount);
+        }
+
         /// <summary>返回基地</summary>
         public ExplorationResult ReturnToBase()
         {
             if (!IsExploring) return null;
 
+            int fatigue = Math.Min(20, 6 + 4 * SearchedRooms.Count);
             foreach (var npcId in TeamNPCIds)
             {
                 var npc = _npcSystem.GetNPC(npcId);
-                if (npc != null && npc.Status == NPCStatus.Working)
-                {
-                    _npcSystem.SetNPCStatus(npcId, NPCStatus.Idle);
-                }
+                if (npc?.IsAlive != true) continue;
+                npc.Fatigue = Math.Min(GameConfig.MaxNPCFatigue, npc.Fatigue + fatigue);
+                if (npc.Status == NPCStatus.Working) _npcSystem.SetNPCStatus(npcId, NPCStatus.Idle);
             }
 
             var resultMapId = CurrentMap?.Id ?? "";

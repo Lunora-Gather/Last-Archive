@@ -50,6 +50,8 @@ namespace LastArchive
 
         // ===== 探索配置 =====
         public const int MaxExplorationTeamSize = 3;
+        public const int ExpeditionFatigueLimit = 75;
+        public const int UploadShardCost = 25;
         public const int BaseSearchSuccessRate = 70;     // 基础搜索成功率%
         public const int DangerInjuryChance = 30;        // 危险房间受伤概率%
 

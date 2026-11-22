@@ -20,7 +20,9 @@ namespace LastArchive
         public int DangerLevel;        // 0-10
         public List<ResourceAmount> LootTable = new List<ResourceAmount>();
         public List<string> ConnectedRooms = new List<string>();
-        public ExplorationEventType EventType;
+        public ExplorationEventType? EventType;
+        public int MemoryShardReward = 1;
+        public string SearchItemId;
         public string RequiredItem;     // 需要的物品ID（空=不需要）
         public bool Locked;
     }
