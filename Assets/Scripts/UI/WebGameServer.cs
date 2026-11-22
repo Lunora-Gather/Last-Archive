@@ -212,7 +212,7 @@ namespace LastArchive
     internal class WebPlayerSession
     {
         private readonly string _savePath;
-        private readonly GameScope _scope = new();
+        private GameScope _scope = new();
         private readonly object _gate = new();
         private readonly List<string> _log = new();
         private GameManager _game;
@@ -258,7 +258,8 @@ namespace LastArchive
         private string RouteApi(string path, string method, HttpListenerRequest req)
         {
             // GET /api/status - 游戏状态概览
-            if (method == "POST" && _game.IsGameOver && path is not ("/api/save" or "/api/load" or "/api/newgame"))
+            if (method == "POST" && _game.IsGameOver &&
+                path is not ("/api/save" or "/api/load" or "/api/newgame" or "/api/save/import"))
                 return Failure("游戏已结束。");
             if (path == "/api/status" && method == "GET") return GetStatus();
             // GET /api/npcs - NPC列表
@@ -282,6 +283,8 @@ namespace LastArchive
             if (path == "/api/nextday" && method == "POST") return DoNextDay(req);
             // POST /api/save - 保存
             if (path == "/api/save" && method == "POST") return DoSave();
+            if (path == "/api/save/export" && method == "GET") return ExportSave();
+            if (path == "/api/save/import" && method == "POST") return ImportSave(req);
             // POST /api/load - 读档
             if (path == "/api/load" && method == "POST") return DoLoad();
             // POST /api/newgame - 新游戏
@@ -542,6 +545,37 @@ namespace LastArchive
             if (ok) _log.Clear();
             AddLog(ok ? "读档成功" : "读档失败");
             return JsonSerializer.Serialize(new { ok, msg = ok ? "已读取存档。" : "暂无可读取的存档，或存档已损坏。" });
+        }
+
+        private string ExportSave()
+        {
+            var data = _game.CaptureSave();
+            if (data == null) return Failure("请先结束探索和战斗，再导出存档。");
+            return PortableSave.Export(data) ?? Failure("当前存档超过 2 MB，无法导出。");
+        }
+
+        private string ImportSave(HttpListenerRequest request)
+        {
+            if (!_game.CanSave) return Failure("请先结束探索和战斗，再导入存档。");
+            var (data, error) = PortableSave.Read(request.InputStream, request.ContentLength64);
+            if (data == null) return Failure(error);
+            if (!PortableSave.MatchesWorld(data, _game)) return Failure("存档中的城镇或探索数据不完整。");
+
+            // Build the replacement away from the active game's services, then publish it only after saving.
+            var scope = new GameScope();
+            var game = new GameManager(_savePath);
+            bool saved = scope.Run(() =>
+            {
+                game.RestoreSave(data);
+                return game.SaveGame();
+            });
+            if (!saved) return Failure("导入未保存，请稍后重试。");
+
+            _scope = scope;
+            _game = game;
+            _log.Clear();
+            AddLog("已导入文件存档。");
+            return JsonSerializer.Serialize(new { ok = true, day = data.CurrentDay, msg = "已导入并保存进度。" });
         }
 
         private static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, msg = message });

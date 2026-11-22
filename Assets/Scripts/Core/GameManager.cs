@@ -1066,8 +1066,13 @@ namespace LastArchive
         /// <summary>保存游戏</summary>
         public bool SaveGame()
         {
-            if (!CanSave) return false;
+            var data = CaptureSave();
+            return data != null && Save.SaveGame(data);
+        }
 
+        internal SaveData CaptureSave()
+        {
+            if (!CanSave) return null;
             var data = Save.CreateNewSaveData(Time.CurrentDay, Time.CurrentPhase, Resources, NPCs, Buildings, Quests, Items, Factions, Achievements);
             data.LastSettledDay = _lastSettledDay;
             data.StarvationDays = _starvationDays;
@@ -1097,7 +1102,7 @@ namespace LastArchive
                     data.Rooms.Add(new RoomSaveData { MapId = map.Id, RoomId = room.Id, Visited = room.Visited, Locked = room.Locked });
                 }
             }
-            return Save.SaveGame(data);
+            return data;
         }
 
         /// <summary>加载游戏</summary>
@@ -1106,6 +1111,12 @@ namespace LastArchive
             var data = Save.LoadGame();
             if (data == null) return false;
 
+            RestoreSave(data);
+            return true;
+        }
+
+        internal void RestoreSave(SaveData data)
+        {
             Initialize(AIProvider);
             StartNewGame();
 
@@ -1255,7 +1266,6 @@ namespace LastArchive
             // Repair older saves captured before early buildings were reconciled.
             if (!data.LastSettledDay.HasValue)
                 foreach (var quest in Quests.GetActiveQuests()) ReconcileQuest(quest.QuestId);
-            return true;
         }
 
         // ===== 事件处理 =====

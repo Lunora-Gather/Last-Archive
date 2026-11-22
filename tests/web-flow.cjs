@@ -7,6 +7,7 @@ const path = require('node:path');
 const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
 const { webkit } = require('playwright');
+const { verifySaveTransfer } = require('./save-transfer.cjs');
 
 const timeout = 12_000;
 const dll = path.resolve(process.argv[2] || 'bin/Release/net10.0/LastArchive.dll');
@@ -304,6 +305,7 @@ async function main() {
     await day(other, 2);
     await button(other, '停止自动').click();
     report('自动游玩也能进入下一天并停止');
+    await verifySaveTransfer(browser, base);
     assert.deepEqual(errors, []);
   } catch (error) {
     console.error(serverOutput);

@@ -13,6 +13,8 @@ const endings = [
   { type: 'Upload', title: '上传意识', desc: '用记忆碎片建立数字档案，让居民的记忆继续存续。' }
 ];
 const tabs = [...document.querySelectorAll('.tabs button')];
+const maxSaveFileBytes = 2 * 1024 * 1024;
+let pendingSaveFile = null;
 
 const state = {
   tab: 0, status: null, npcs: [], quests: [], crises: [], allies: new Set(),
@@ -36,13 +38,17 @@ const note = (message, error = false) => {
 
 async function request(route, options) {
   const response = await fetch('/api/' + route, options);
+  if (!response.headers.get('Content-Type')?.includes('application/json')) {
+    throw new Error('通讯失败，请重试。');
+  }
   const body = await response.json();
   if (!response.ok) throw new Error(body.error || '通讯失败，请重试。');
   return body;
 }
 const get = route => request(route);
 const post = (route, body = {}) => request(route, {
-  method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+  method: 'POST', headers: { 'Content-Type': 'application/json' },
+  body: body instanceof File ? body : JSON.stringify(body)
 });
 
 function loadTheme() {
@@ -62,6 +68,8 @@ function syncControls() {
   $('advanceBtn').title = status && !status.canSave ? '返回基地后可推进' : '结算今天并保存';
   $('saveBtn').disabled = state.busy || !status?.canSave;
   $('loadBtn').disabled = state.busy || !status;
+  $('exportSaveBtn').disabled = state.busy || !status?.canSave;
+  $('importSaveBtn').disabled = state.busy || !status?.canSave;
   $('newGameBtn').disabled = state.busy || !status;
   $('autoplayBtn').disabled = !state.auto && (state.busy || !status?.canSave || status.isGameOver);
   $('saveState').textContent = state.saveLabel || (status && !status.canSave ? '远征结束后可存档' : '');
@@ -488,6 +496,50 @@ async function mutate(route, body, onSuccess) {
   return result;
 }
 
+async function exportSaveFile() {
+  try {
+    const result = await get('save/export');
+    if (result.ok === false) { note(result.msg, true); return; }
+    const blob = new Blob([JSON.stringify(result)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'last-archive-day-' + result.data.CurrentDay + '.json';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    note('存档文件已生成，导入该文件即可在其他设备继续。');
+  } catch {
+    note('无法导出存档，请重试。', true);
+  }
+}
+
+async function selectSaveFile(event) {
+  const input = event.target;
+  const file = input.files[0];
+  input.value = '';
+  if (!file || !state.status?.canSave || state.busy) return;
+  if (file.size > maxSaveFileBytes) { note('存档文件不能超过 2 MB。', true); return; }
+  stopAuto();
+  let preview;
+  try {
+    preview = JSON.parse(await file.text());
+  } catch {
+    note('这不是可读取的最后档案城存档。', true);
+    return;
+  }
+  if (preview?.format !== 'last-archive-save' || !Number.isInteger(preview.data?.CurrentDay) ||
+      preview.data.CurrentDay < 1) {
+    note('这不是可读取的最后档案城存档。', true);
+    return;
+  }
+  if (!state.status?.canSave || state.busy) return;
+  pendingSaveFile = file;
+  confirmation('导入存档文件', '此文件的进度为第 ' + preview.data.CurrentDay +
+    ' 天。确认后将替换此会话的当前进度和服务器存档。', 'import-save-confirm');
+}
+
 function nextDay() {
   if (!state.status?.canSave || state.status.isGameOver) return;
   return mutate('nextday', { expectedDay: state.status.day }, result => {
@@ -559,6 +611,22 @@ document.addEventListener('click', event => {
     return;
   }
   switch (action) {
+    case 'export-save': exportSaveFile(); break;
+    case 'import-save': $('importSaveFile').click(); break;
+    case 'import-save-confirm': {
+      const file = pendingSaveFile;
+      pendingSaveFile = null;
+      $('diaryModal').close();
+      if (file) mutate('save/import', file, result => {
+        state.saveLabel = '已导入 · 第 ' + result.day + ' 天';
+        state.allies.clear();
+        state.targetIndex = 0;
+        state.combatLog = '';
+        showTab(0);
+        return result.msg;
+      });
+      break;
+    }
     case 'newgame': confirmation('开启全新游戏', '现有存档会保留到下次保存。', 'newgame-confirm'); break;
     case 'autoplay':
       if (state.auto) stopAuto();
@@ -624,6 +692,8 @@ document.addEventListener('change', event => {
   if (target.name === 'exploreTeamCheckbox') handleCrew(target);
 });
 $('advanceBtn').addEventListener('click', nextDay);
+$('importSaveFile').addEventListener('change', selectSaveFile);
+$('diaryModal').addEventListener('close', () => { pendingSaveFile = null; });
 $('themeToggleBtn').addEventListener('click', () => switchTheme(!document.documentElement.classList.contains('light')));
 switchTheme(loadTheme());
 if (window.matchMedia('(max-width: 680px)').matches) document.querySelector('.game-controls').open = false;

@@ -123,6 +123,8 @@ NODE_PATH="$test_deps/node_modules" node tests/web-flow.cjs
 
 网页存档默认写入 `web-saves/`，每个浏览器通过同站 Cookie 识别自己的存档。清除 Cookie 或换用浏览器后会开启独立的进度。在嵌入页无法使用 Cookie 时，点「在独立窗口打开游戏」。原来的公共存档和终端版 `save.json` 分开保留。
 
+在「进度管理」中点「导出存档文件」，可把当前进度下载为 JSON 文件。换电脑、换浏览器或清除 Cookie 后，点「导入存档文件」，选择先前下载的文件并确认。导入成功后会立即保存为当前会话的进度，并替换该会话之前的存档。出城探索或战斗时，请先返回基地。
+
 Docker 默认将网页存档放在 `/data/last-archive`。在 Hugging Face Spaces 上要跨容器重启保留存档，需要把持久卷挂载到 `/data`，或将 `LAST_ARCHIVE_SAVE_DIR` 指向其他持久挂载目录。
 
 ---
