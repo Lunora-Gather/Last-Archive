@@ -18,9 +18,13 @@
       </button>
       <div class="day-status">
         <span id="statusDot" class="status-dot" aria-hidden="true"></span>
-        <span id="title">连接中</span>
+        <div>
+          <span id="title">连接中</span>
+          <span id="saveState" class="save-state"></span>
+        </div>
       </div>
       <div class="header-actions">
+        <button id="progressBtn" class="quiet" aria-haspopup="dialog" aria-controls="progressModal">进度管理</button>
         <button id="themeToggleBtn" class="icon-button" aria-label="切换浅色主题" title="切换浅色主题">◐</button>
         <button id="advanceBtn" class="primary" disabled>推进到下一天 <span aria-hidden="true">→</span></button>
       </div>
@@ -40,17 +44,6 @@
         <button data-tab="6"><span aria-hidden="true">△</span>危机</button>
         <button data-tab="7"><span aria-hidden="true">◉</span>AI</button>
       </nav>
-      <details class="game-controls" open>
-        <summary>进度管理</summary>
-        <button id="saveBtn" data-action="save" disabled>保存当前进度</button>
-        <button id="loadBtn" data-action="load">读取历史存档</button>
-        <button id="exportSaveBtn" data-action="export-save" disabled>导出存档文件</button>
-        <button id="importSaveBtn" data-action="import-save" disabled>导入存档文件</button>
-        <input id="importSaveFile" type="file" accept=".json,application/json" aria-label="选择存档文件" hidden>
-        <button id="autoplayBtn" data-action="autoplay">开启自动游玩</button>
-        <button id="newGameBtn" data-action="newgame">开启全新游戏</button>
-      </details>
-      <p id="saveState" class="save-state"></p>
     </aside>
 
     <main id="main-content" tabindex="-1">
@@ -75,6 +68,22 @@
       </div>
     </main>
   </div>
+
+  <dialog id="progressModal" class="modal" aria-labelledby="progressHeading">
+    <div class="modal-header">
+      <h2 id="progressHeading">进度管理</h2>
+      <form method="dialog"><button>关闭</button></form>
+    </div>
+    <div class="game-controls">
+      <button id="saveBtn" data-action="save" disabled>保存当前进度</button>
+      <button id="loadBtn" data-action="load" disabled>读取历史存档</button>
+      <button id="exportSaveBtn" data-action="export-save" disabled>导出存档文件</button>
+      <button id="importSaveBtn" data-action="import-save" disabled>导入存档文件</button>
+      <button id="autoplayBtn" data-action="autoplay" disabled>开启自动游玩</button>
+      <button id="newGameBtn" data-action="newgame" disabled>开启全新游戏</button>
+    </div>
+  </dialog>
+  <input id="importSaveFile" type="file" accept=".json,application/json" aria-label="选择存档文件" hidden>
 
   <dialog id="diaryModal" class="modal" aria-labelledby="dialogHeading">
     <div class="modal-header">

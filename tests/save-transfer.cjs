@@ -6,6 +6,7 @@ async function verifySaveTransfer(browser, base) {
   const from = await browser.newContext({ acceptDownloads: true });
   const to = await browser.newContext();
   const button = (page, name) => page.getByRole('button', { name, exact: true });
+  const openProgress = page => button(page, '进度管理').click();
   const dialog = page => page.locator('#diaryModal');
   const day = (page, number) => page.waitForFunction(value =>
     document.querySelector('#title').textContent.includes('第' + value + '天'), number);
@@ -43,6 +44,7 @@ async function verifySaveTransfer(browser, base) {
   }
 
   async function chooseFile(page, file) {
+    await openProgress(page);
     const [chooser] = await Promise.all([
       page.waitForEvent('filechooser'),
       button(page, '导入存档文件').click()
@@ -66,6 +68,7 @@ async function verifySaveTransfer(browser, base) {
     await greenhouse.getByText('温室 Lv1', { exact: false }).waitFor();
     const original = await progress(source);
 
+    await openProgress(source);
     const [download] = await Promise.all([
       source.waitForEvent('download'),
       button(source, '导出存档文件').click()
@@ -80,9 +83,11 @@ async function verifySaveTransfer(browser, base) {
     assert.equal(file.data.BuildingStates.find(building => building.Id === 'greenhouse').Built, true);
     const upload = { name: download.suggestedFilename(), mimeType: 'application/json', buffer: await fs.readFile(filePath) };
     // Export includes the unsaved greenhouse without changing the source's stored checkpoint.
+    await openProgress(source);
     await action(source, 'load', button(source, '读取历史存档'));
     assert.equal((await progress(source)).buildings.find(building => building.id === 'greenhouse').built, false);
 
+    await openProgress(target);
     await action(target, 'save', button(target, '保存当前进度'));
     const previous = await progress(target);
     assert.equal(previous.day, 1);
@@ -97,6 +102,7 @@ async function verifySaveTransfer(browser, base) {
     assert.match(rejected.msg, /数据不完整/);
     await target.getByText(rejected.msg, { exact: true }).waitFor();
     assert.deepEqual(await progress(target), previous);
+    await openProgress(target);
     await action(target, 'load', button(target, '读取历史存档'));
     assert.deepEqual(await progress(target), previous);
 
@@ -106,6 +112,7 @@ async function verifySaveTransfer(browser, base) {
     assert.deepEqual(await progress(target), original);
     await target.reload({ waitUntil: 'domcontentloaded' });
     await day(target, 2);
+    await openProgress(target);
     await action(target, 'load', button(target, '读取历史存档'));
     assert.deepEqual(await progress(target), original);
     assert.equal((await action(target, 'nextday', button(target, '推进到下一天'))).day, 3);

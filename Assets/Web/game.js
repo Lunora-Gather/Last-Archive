@@ -13,6 +13,7 @@ const endings = [
   { type: 'Upload', title: '上传意识', desc: '用记忆碎片建立数字档案，让居民的记忆继续存续。' }
 ];
 const tabs = [...document.querySelectorAll('.tabs button')];
+const progressDialog = $('progressModal');
 const maxSaveFileBytes = 2 * 1024 * 1024;
 let pendingSaveFile = null;
 
@@ -134,7 +135,10 @@ async function refresh() {
 
 function showTab(tab) {
   if (!views[tab]) return;
-  if (state.tab !== tab) state.tab = tab;
+  if (state.tab !== tab) {
+    state.tab = tab;
+    window.scrollTo(0, 0);
+  }
   for (const button of tabs) {
     if (+button.dataset.tab === tab) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
@@ -584,7 +588,8 @@ document.addEventListener('click', event => {
   if (button.dataset.tab !== undefined) { showTab(Number(button.dataset.tab)); return; }
   const action = button.dataset.action;
   const id = button.dataset.id;
-  if (!action || state.busy) return;
+  if (!action || (state.busy && !(action === 'autoplay' && state.auto))) return;
+  if (progressDialog.contains(button)) progressDialog.close();
   if (saveActions.has(action)) {
     const route = action === 'newgame-confirm' ? 'newgame' : action === 'ending-confirm' ? 'ending/choose' : action;
     if (route !== 'save') stopAuto();
@@ -692,11 +697,11 @@ document.addEventListener('change', event => {
   if (target.name === 'exploreTeamCheckbox') handleCrew(target);
 });
 $('advanceBtn').addEventListener('click', nextDay);
+$('progressBtn').addEventListener('click', () => progressDialog.showModal());
 $('importSaveFile').addEventListener('change', selectSaveFile);
 $('diaryModal').addEventListener('close', () => { pendingSaveFile = null; });
 $('themeToggleBtn').addEventListener('click', () => switchTheme(!document.documentElement.classList.contains('light')));
 switchTheme(loadTheme());
-if (window.matchMedia('(max-width: 680px)').matches) document.querySelector('.game-controls').open = false;
 if (window.top !== window.self) $('openGame').hidden = false;
 refresh().catch(error => {
   note(error.message || '无法连接档案城。', true);

@@ -8,6 +8,7 @@ const { once } = require('node:events');
 const { setTimeout: delay } = require('node:timers/promises');
 const { webkit } = require('playwright');
 const { verifySaveTransfer } = require('./save-transfer.cjs');
+const { verifySmallWindow } = require('./small-window.cjs');
 
 const timeout = 12_000;
 const dll = path.resolve(process.argv[2] || 'bin/Release/net10.0/LastArchive.dll');
@@ -86,6 +87,7 @@ async function main() {
   }
 
   const button = (page, label) => page.getByRole('button', { name: label });
+  const openProgress = page => button(page, '进度管理').click();
   async function tab(page, label, marker) {
     await page.locator('.tabs').getByRole('button', { name: label }).click();
     await page.locator('#page').getByText(marker).filter({ visible: true }).first().waitFor();
@@ -179,7 +181,7 @@ async function main() {
 
     const team = ['iron_guard', 'big_hu', 'lin_doctor'];
     await startExplore(page, 'abandoned_hospital', team);
-    assert.equal(await button(page, '保存当前进度').isDisabled(), true);
+    assert.equal(await page.locator('#saveBtn').isDisabled(), true);
     assert.equal((await (await post(page, 'save')).json()).ok, false);
     await move(page, /前往: 走廊/, 'corridor');
     assert.equal((await action(page, 'explore/search', button(page, '搜寻当前房间'))).combatTriggered, true);
@@ -223,12 +225,15 @@ async function main() {
     await action(page, 'items/equip', button(page, '确认装备'));
     assert.equal((await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').weapon, '生锈的刀');
     const inventory = await get(page, 'items');
+    await openProgress(page);
     await action(page, 'save', button(page, '保存当前进度'));
+    await openProgress(page);
     await button(page, '开启全新游戏').click();
     await action(page, 'newgame', page.locator('#diaryModal').getByRole('button', { name: '确认', exact: true }));
     await day(page, 1);
     assert.equal((await get(page, 'buildings')).find(b => b.id === 'greenhouse').built, false);
     for (let i = 0; i < 2; i++) {
+      await openProgress(page);
       await action(page, 'load', button(page, '读取历史存档'));
       await day(page, 2);
       assert.deepEqual(await get(page, 'items'), inventory);
@@ -299,13 +304,16 @@ async function main() {
     report('满背包合成失败无材料损失，主线完成的第 15 天结局正确判胜');
 
     const autoResult = other.waitForResponse(r => r.url() === base + '/api/nextday' && r.request().method() === 'POST');
+    await openProgress(other);
     await button(other, '开启自动游玩').click();
     await other.locator('#diaryModal').getByRole('button', { name: '确认', exact: true }).click();
     assert.equal((await (await autoResult).json()).day, 2);
     await day(other, 2);
+    await openProgress(other);
     await button(other, '停止自动').click();
     report('自动游玩也能进入下一天并停止');
     await verifySaveTransfer(browser, base);
+    await verifySmallWindow(browser, base);
     assert.deepEqual(errors, []);
   } catch (error) {
     console.error(serverOutput);
