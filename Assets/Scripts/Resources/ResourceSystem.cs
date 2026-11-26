@@ -89,10 +89,10 @@ namespace LastArchive
         }
 
         /// <summary>应用每日消耗</summary>
-        public void ApplyDailyConsumption(int npcCount, int buildingPowerCost)
+        public void ApplyDailyConsumption(int npcCount, int buildingPowerCost, int extraWater = 0)
         {
             int foodCost = npcCount * GameConstants.DailyFoodConsumptionPerNPC;
-            int waterCost = npcCount * GameConstants.DailyWaterConsumptionPerNPC;
+            int waterCost = npcCount * GameConstants.DailyWaterConsumptionPerNPC + extraWater;
             int powerCost = buildingPowerCost;
 
             // 食物不足触发危机

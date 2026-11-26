@@ -45,6 +45,20 @@ namespace LastArchive
         public List<RoomSaveData> Rooms { get; set; } = new();
         public List<CrisisInstance> Crises { get; set; } = new();
         public Dictionary<string, int> AchievementDays { get; set; } = new();
+        public SupplyRoute? SupplyRoute { get; set; }
+        public SupplyRoute PlannedSupplyRoute { get; set; }
+        public CampaignScenario Scenario { get; set; }
+        public int RosterDay { get; set; }
+        public List<string> FieldedResidents { get; set; } = new();
+        public CampDuty CampDuty { get; set; }
+        public string DutyWorker { get; set; }
+        public bool ArchiveRecovered { get; set; }
+        public bool TowerCalibrated { get; set; }
+        public bool RelayInstalled { get; set; }
+        public bool RelayCommissioned { get; set; }
+        public int ArchiveReturnDay { get; set; }
+        public int DepartureDay { get; set; }
+        public int Departures { get; set; }
     }
 
     public class RoomSaveData
@@ -53,6 +67,8 @@ namespace LastArchive
         public string RoomId { get; set; }
         public bool Visited { get; set; }
         public bool Locked { get; set; }
+        public bool Claimed { get; set; }
+        public bool Cleared { get; set; }
     }
 
     [Serializable]

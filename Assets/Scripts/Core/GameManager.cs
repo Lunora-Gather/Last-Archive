@@ -11,7 +11,7 @@ namespace LastArchive
     /// <summary>
     /// 游戏管理器 - 顶层协调器，不堆砌逻辑
     /// </summary>
-    public class GameManager
+    public partial class GameManager
     {
         // ===== 核心系统 =====
         public ResourceSystem Resources { get; private set; }
@@ -91,15 +91,15 @@ namespace LastArchive
             NPCs = new NPCSystem();
             Buildings = new BuildingSystem(Resources);
             Items = new ItemSystem(NPCs, Resources);
-            Exploration = new ExplorationSystem(Resources, NPCs, Items);
+            Exploration = new ExplorationSystem(Resources, NPCs, Items, this);
             Quests = new QuestSystem(Resources, NPCs);
-            Time = new TimeSystem(Resources, NPCs, Buildings, Quests, MemSummarizer, EventGen);
+            Time = new TimeSystem(Resources, NPCs, Buildings, Quests, MemSummarizer, EventGen, SettleCampDuty, PlannedWater);
             Save = new SaveSystem(_savePath);
 
             // 新系统（需要在Combat之前初始化，因为Combat依赖ItemSystem）
             Factions = new FactionSystem();
             Achievements = new AchievementSystem();
-            Combat = new CombatSystem(Resources, NPCs, Items);
+            Combat = new CombatSystem(Resources, NPCs, Items, Exploration.CollectReward);
             DailyEvents = new DailyEventSystem();
             Crises = new CrisisSystem();
             Endings = new EndingSystem();
@@ -143,6 +143,7 @@ namespace LastArchive
             _starvationDays = 0;
             _lastSettledDay = 0;
             _locationVisits.Clear();
+            ResetCampaign();
         }
 
         /// <summary>动态更新AI提供者</summary>
@@ -157,7 +158,7 @@ namespace LastArchive
         }
 
         /// <summary>开始新游戏</summary>
-        public void StartNewGame()
+        public void StartNewGame(CampaignScenario scenario = CampaignScenario.Standard)
         {
             // 初始化资源
             Resources.Initialize(GameConfig.InitialResources);
@@ -178,6 +179,8 @@ namespace LastArchive
             {
                 Psychology.Initialize(npc.Id, npc.Morale, npc.Loyalty);
             }
+
+            ApplyOpening(scenario);
 
             // 开始时间
             Time.StartNewGame();
@@ -247,7 +250,7 @@ namespace LastArchive
                 },
                 new NPCInstance
                 {
-                    Id = "iron_guard", Name = "铁柱", Age = 32, Role = NPCRole.Scout,
+                    Id = "iron_guard", Name = "铁柱", Age = 32, Role = NPCRole.Guard,
                     Description = "前军人，右臂在灾难中受伤。沉默寡言，但守护同伴的决心从未动摇。",
                     Health = 85, Morale = 50, Hunger = 25, Fatigue = 20, Loyalty = 65,
                     Medical = 2, Engineering = 3, Scavenging = 4, Combat = 9, Social = 2,
@@ -275,7 +278,7 @@ namespace LastArchive
                 },
                 new NPCInstance
                 {
-                    Id = "big_hu", Name = "大虎", Age = 38, Role = NPCRole.Scout,
+                    Id = "big_hu", Name = "大虎", Age = 38, Role = NPCRole.Guard,
                     Description = "前建筑工人，力大无穷但脑子转得慢。对朋友极其忠诚。",
                     Health = 95, Morale = 60, Hunger = 35, Fatigue = 15, Loyalty = 70,
                     Medical = 1, Engineering = 6, Scavenging = 3, Combat = 7, Social = 2,
@@ -467,28 +470,33 @@ namespace LastArchive
             var hospital = new ExplorationMapData
             {
                 Id = "abandoned_hospital", Name = "废弃医院",
-                Description = "灾难前的急救中心，如今只剩破碎病床和发霉药柜。",
+                Description = "击退走廊的守卫，再去手术室一次带走 4 枚碎片。药房可补充药品。",
                 MainLoot = new List<ResourceType> { ResourceType.Medicine, ResourceType.MemoryShards },
                 MainEnemies = new List<string> { "wanderer", "toxic_spore" }
             };
             hospital.Rooms.Add(new RoomData { Id = "entrance", Name = "入口", Description = "医院大厅，一片狼藉。", DangerLevel = 1, ConnectedRooms = new List<string> { "corridor" } });
-            hospital.Rooms.Add(new RoomData { Id = "corridor", Name = "走廊", EventType = ExplorationEventType.EnemyEncounter, Description = "昏暗的走廊，墙上有抓痕。", DangerLevel = 2, ConnectedRooms = new List<string> { "entrance", "pharmacy", "surgery" } });
-            hospital.Rooms.Add(new RoomData { Id = "pharmacy", Name = "药房", EventType = ExplorationEventType.FindResources, SearchItemId = "hospital_key", Description = "部分药品还在货架上。", DangerLevel = 1, ConnectedRooms = new List<string> { "corridor" } });
-            hospital.Rooms.Add(new RoomData { Id = "surgery", Name = "手术室", EventType = ExplorationEventType.FindMemoryShard, MemoryShardReward = 2, Description = "手术台上残留着暗色痕迹。", DangerLevel = 3, ConnectedRooms = new List<string> { "corridor", "morgue" } });
+            hospital.Rooms.Add(new RoomData { Id = "corridor", Name = "走廊", EventType = ExplorationEventType.EnemyEncounter,
+                Encounter = new() { "wanderer", "toxic_spore" }, Description = "流浪者与毒孢子堵住了通往手术室的路。", DangerLevel = 2, ConnectedRooms = new() { "entrance", "pharmacy", "surgery" } });
+            hospital.Rooms.Add(new RoomData { Id = "pharmacy", Name = "药房", EventType = ExplorationEventType.FindResources, SearchItemId = "hospital_key",
+                LootTable = new() { new(ResourceType.Medicine, 4) }, Description = "药柜可补充 4 药品。", DangerLevel = 1, ConnectedRooms = new() { "corridor" } });
+            hospital.Rooms.Add(new RoomData { Id = "surgery", Name = "手术室", RequiredClearance = "corridor", EventType = ExplorationEventType.FindMemoryShard,
+                MemoryShardReward = 4, Description = "手术台上残留着四枚记忆碎片。", DangerLevel = 3, ConnectedRooms = new() { "corridor", "morgue" } });
             hospital.Rooms.Add(new RoomData { Id = "morgue", Name = "太平间", Description = "冰柜中隐约传来声响。", DangerLevel = 4, Locked = true, RequiredItem = "hospital_key", ConnectedRooms = new List<string> { "surgery" } });
 
             // === 地铁废墟 ===
             var subway = new ExplorationMapData
             {
                 Id = "subway_ruins", Name = "地铁废墟",
-                Description = "坍塌的地铁隧道，老周说这里通向城市的地下网络。",
+                Description = "控制室有 2 枚碎片。物资仓库能补充零件和电力。",
                 MainLoot = new List<ResourceType> { ResourceType.Parts, ResourceType.Power },
                 MainEnemies = new List<string> { "mechanical_guard", "scavenger_gang" }
             };
             subway.Rooms.Add(new RoomData { Id = "platform", Name = "站台", Description = "破碎的站台，广告牌还亮着微光。", DangerLevel = 2, ConnectedRooms = new List<string> { "tunnel", "control_room" } });
             subway.Rooms.Add(new RoomData { Id = "tunnel", Name = "隧道", Description = "黑暗的隧道，远处有脚步声。", DangerLevel = 3, ConnectedRooms = new List<string> { "platform", "storage" } });
-            subway.Rooms.Add(new RoomData { Id = "control_room", Name = "控制室", Description = "老旧的控制台，也许还能启动什么。", DangerLevel = 2, ConnectedRooms = new List<string> { "platform" } });
-            subway.Rooms.Add(new RoomData { Id = "storage", Name = "物资仓库", Description = "被遗忘的仓库，可能还有有用的东西。", DangerLevel = 3, ConnectedRooms = new List<string> { "tunnel" } });
+            subway.Rooms.Add(new RoomData { Id = "control_room", Name = "控制室", EventType = ExplorationEventType.FindMemoryShard,
+                MemoryShardReward = 2, Description = "控制台还留有两枚记忆碎片。", DangerLevel = 2, ConnectedRooms = new() { "platform" } });
+            subway.Rooms.Add(new RoomData { Id = "storage", Name = "物资仓库", EventType = ExplorationEventType.FindResources,
+                LootTable = new() { new(ResourceType.Parts, 10), new(ResourceType.Power, 6) }, Description = "定点回收 10 零件和 6 电力。", DangerLevel = 3, ConnectedRooms = new() { "tunnel" } });
 
             // === 旧档案城 ===
             var archive_ruins = new ExplorationMapData
@@ -499,7 +507,8 @@ namespace LastArchive
                 MainEnemies = new List<string> { "shadow_creature", "memory_ghost", "archive_warden" }
             };
             archive_ruins.Rooms.Add(new RoomData { Id = "gate", Name = "大门", EventType = ExplorationEventType.FindMemoryShard, Description = "锈蚀的铁门，上面刻着档案城的标记。", DangerLevel = 3, ConnectedRooms = new List<string> { "hall" } });
-            archive_ruins.Rooms.Add(new RoomData { Id = "hall", Name = "大厅", EventType = ExplorationEventType.FindMemoryShard, MemoryShardReward = 2, Description = "穹顶大厅，记忆碎片在空中飘浮。", DangerLevel = 4, ConnectedRooms = new List<string> { "gate", "archive_room", "server_room" } });
+            archive_ruins.Rooms.Add(new RoomData { Id = "hall", Name = "大厅", EventType = ExplorationEventType.FindMemoryShard, MemoryShardReward = 2,
+                Evidence = ExpeditionEvidence.Archive, SearchItemId = "archive_key", Description = "搜寻此处可找到广播塔的旧城档案。", DangerLevel = 4, ConnectedRooms = new() { "gate", "archive_room", "server_room" } });
             archive_ruins.Rooms.Add(new RoomData { Id = "archive_room", Name = "档案室", Description = "一排排数据柜，有些还在运转。", DangerLevel = 5, Locked = true, RequiredItem = "archive_key", ConnectedRooms = new List<string> { "hall" } });
             archive_ruins.Rooms.Add(new RoomData { Id = "server_room", Name = "服务器室", Description = "嗡嗡作响的服务器，核心记忆就在这里。", DangerLevel = 5, Locked = true, RequiredItem = "archive_key", ConnectedRooms = new List<string> { "hall" } });
 
@@ -507,26 +516,31 @@ namespace LastArchive
             var park = new ExplorationMapData
             {
                 Id = "ruined_park", Name = "废墟公园",
-                Description = "曾经的市民公园，如今被变异植物覆盖。",
+                Description = "小树林可找到 2 枚碎片。温室遗迹可采回食物。",
                 MainLoot = new List<ResourceType> { ResourceType.Food, ResourceType.Medicine },
                 MainEnemies = new List<string> { "mutant_plant", "frost_crawler" }
             };
             park.Rooms.Add(new RoomData { Id = "park_entrance", Name = "公园入口", Description = "锈蚀的铁门和倒塌的售票亭。", DangerLevel = 1, ConnectedRooms = new List<string> { "fountain" } });
             park.Rooms.Add(new RoomData { Id = "fountain", Name = "喷泉广场", Description = "干涸的喷泉，长满了藤蔓。", DangerLevel = 2, ConnectedRooms = new List<string> { "park_entrance", "greenhouse", "grove" } });
-            park.Rooms.Add(new RoomData { Id = "greenhouse", Name = "温室遗迹", Description = "破碎的玻璃温室，里面还有活的植物。", DangerLevel = 2, ConnectedRooms = new List<string> { "fountain" } });
-            park.Rooms.Add(new RoomData { Id = "grove", Name = "小树林", Description = "密林深处，光线几乎无法穿透。", DangerLevel = 3, ConnectedRooms = new List<string> { "fountain" } });
+            park.Rooms.Add(new RoomData { Id = "greenhouse", Name = "温室遗迹", EventType = ExplorationEventType.FindResources,
+                LootTable = new() { new(ResourceType.Food, 16) }, Description = "采收 16 食物。", DangerLevel = 2, ConnectedRooms = new() { "fountain" } });
+            park.Rooms.Add(new RoomData { Id = "grove", Name = "小树林", EventType = ExplorationEventType.FindMemoryShard,
+                MemoryShardReward = 2, Description = "树根下埋着两枚记忆碎片。", DangerLevel = 3, ConnectedRooms = new() { "fountain" } });
 
             // === 广播塔 ===
             var tower = new ExplorationMapData
             {
                 Id = "broadcast_tower", Name = "广播塔",
-                Description = "城市最高的建筑，如果能修复天线，也许能联系外界。",
+                Description = $"强攻夺取 8 零件、3 电力。接线避战需要{ExplorationSystem.BypassRequirements}。",
                 MainLoot = new List<ResourceType> { ResourceType.Parts, ResourceType.Power },
                 MainEnemies = new List<string> { "broken_android", "shadow_swarm" }
             };
-            tower.Rooms.Add(new RoomData { Id = "lobby", Name = "大厅", EventType = ExplorationEventType.FindResources, SearchItemId = "tower_key", Description = "空旷的大厅，电梯早已停运。", DangerLevel = 2, ConnectedRooms = new List<string> { "stairs" } });
+            tower.Rooms.Add(new RoomData { Id = "lobby", Name = "大厅", EventType = ExplorationEventType.StoryEvent, SearchItemId = "tower_key", Description = "电梯停运，墙上的值勤箱里留着通往天线平台的钥匙。", DangerLevel = 2, ConnectedRooms = new List<string> { "stairs" } });
             tower.Rooms.Add(new RoomData { Id = "stairs", Name = "楼梯间", Description = "向上延伸的楼梯，越往上越危险。", DangerLevel = 3, ConnectedRooms = new List<string> { "lobby", "antenna_deck" } });
-            tower.Rooms.Add(new RoomData { Id = "antenna_deck", Name = "天线平台", Description = "塔顶的天线平台，可以看到远方的灯火。", DangerLevel = 4, Locked = true, RequiredItem = "tower_key", ConnectedRooms = new List<string> { "stairs" } });
+            tower.Rooms.Add(new RoomData { Id = "antenna_deck", Name = "天线平台", EventType = ExplorationEventType.EnemyEncounter,
+                Encounter = new() { "broken_android", "shadow_swarm" }, Evidence = ExpeditionEvidence.Tower,
+                Description = "强攻会带回零件和电力，也可以让工程队员与搜寻搭档接线绕过守备。", DangerLevel = 4,
+                Locked = true, RequiredItem = "tower_key", ConnectedRooms = new() { "stairs" } });
 
             Exploration.AddMap(hospital);
             Exploration.AddMap(subway);
@@ -539,37 +553,43 @@ namespace LastArchive
             {
                 Id = "underground_shelter", Name = "地下避难所",
                 Description = "灾难前政府的秘密避难所，据说储备了大量物资。",
-                MainLoot = new List<ResourceType> { ResourceType.Food, ResourceType.Medicine, ResourceType.Parts },
+                MainLoot = new List<ResourceType> { ResourceType.Water, ResourceType.Food, ResourceType.Medicine },
                 MainEnemies = new List<string> { "mechanical_guard", "broken_android" }
             };
             shelter.Rooms.Add(new RoomData { Id = "bunker_door", Name = "避难所大门", Description = "厚重的防爆门，需要电力才能开启。", DangerLevel = 2, ConnectedRooms = new List<string> { "corridor_b" } });
             shelter.Rooms.Add(new RoomData { Id = "corridor_b", Name = "走廊", Description = "应急灯还亮着，空气中有消毒水味。", DangerLevel = 2, ConnectedRooms = new List<string> { "bunker_door", "supply_room", "med_bay" } });
-            shelter.Rooms.Add(new RoomData { Id = "supply_room", Name = "物资库", Description = "架子上还有密封的罐头和药品。", DangerLevel = 3, ConnectedRooms = new List<string> { "corridor_b" } });
+            shelter.Rooms.Add(new RoomData { Id = "supply_room", Name = "物资库", EventType = ExplorationEventType.FindResources,
+                LootTable = new() { new(ResourceType.Water, 18), new(ResourceType.Food, 6) }, Description = "取回 18 饮水和 6 食物。", DangerLevel = 3, ConnectedRooms = new() { "corridor_b" } });
             shelter.Rooms.Add(new RoomData { Id = "med_bay", Name = "医疗舱", Description = "完好的医疗设备，像是从未使用过。", DangerLevel = 2, ConnectedRooms = new List<string> { "corridor_b" } });
 
             // === 旧工厂 ===
             var factory = new ExplorationMapData
             {
                 Id = "old_factory", Name = "旧工厂",
-                Description = "曾经制造零件的工厂，也许还能找到能用的设备。",
+                Description = "成品仓库存着备用电池。可回收 6 电力和 4 零件。",
                 MainLoot = new List<ResourceType> { ResourceType.Parts, ResourceType.Power },
                 MainEnemies = new List<string> { "scavenger_gang", "mechanical_guard", "frost_crawler" }
             };
             factory.Rooms.Add(new RoomData { Id = "factory_gate", Name = "工厂大门", Description = "锈蚀的铁门半开着。", DangerLevel = 2, ConnectedRooms = new List<string> { "workshop_f" } });
             factory.Rooms.Add(new RoomData { Id = "workshop_f", Name = "车间", Description = "巨大的车间，机器还保持着生产姿态。", DangerLevel = 3, ConnectedRooms = new List<string> { "factory_gate", "warehouse_f" } });
-            factory.Rooms.Add(new RoomData { Id = "warehouse_f", Name = "成品仓库", Description = "整齐排列的零件箱，有些还没开封。", DangerLevel = 3, ConnectedRooms = new List<string> { "workshop_f" } });
+            factory.Rooms.Add(new RoomData { Id = "warehouse_f", Name = "成品仓库", EventType = ExplorationEventType.FindResources,
+                LootTable = new() { new(ResourceType.Power, 6), new(ResourceType.Parts, 4) },
+                Description = "尚可拆用的电池组与备件。", DangerLevel = 3, ConnectedRooms = new() { "workshop_f" } });
 
             // === 信号中继站 ===
             var relay = new ExplorationMapData
             {
                 Id = "relay_station", Name = "信号中继站",
-                Description = "山丘上的中继站，修复它可以扩大广播范围。",
+                Description = "派工程 ≥ 8 的居民，花 4 电力给中继器通电，一次取回 4 枚碎片。",
                 MainLoot = new List<ResourceType> { ResourceType.Parts, ResourceType.MemoryShards },
                 MainEnemies = new List<string> { "shadow_swarm", "memory_ghost" }
             };
             relay.Rooms.Add(new RoomData { Id = "relay_path", Name = "山路", Description = "蜿蜒上山的路，风声呼啸。", DangerLevel = 2, ConnectedRooms = new List<string> { "relay_building" } });
             relay.Rooms.Add(new RoomData { Id = "relay_building", Name = "中继站", Description = "小型建筑，天线已经折断。", DangerLevel = 3, ConnectedRooms = new List<string> { "relay_path", "relay_roof" } });
-            relay.Rooms.Add(new RoomData { Id = "relay_roof", Name = "屋顶", Description = "从这里可以看到整个城市废墟。", DangerLevel = 4, ConnectedRooms = new List<string> { "relay_building" } });
+            relay.Rooms.Add(new RoomData { Id = "relay_roof", Name = "屋顶", EventType = ExplorationEventType.FindMemoryShard,
+                MemoryShardReward = 4, SearchEngineering = 8, SearchPower = 4,
+                Description = "给中继器通电：需要工程 ≥ 8、消耗 4 电力。首次回收 4 枚碎片。",
+                DangerLevel = 4, ConnectedRooms = new() { "relay_building" } });
 
             Exploration.AddMap(shelter);
             Exploration.AddMap(factory);
@@ -579,7 +599,8 @@ namespace LastArchive
         /// <summary>初始化敌人（13个）</summary>
         private void InitializeEnemies()
         {
-            Combat.RegisterEnemy(new EnemyData { Id = "wanderer", Name = "流浪者", Hp = 30, MaxHp = 30, Attack = 5, Defense = 2, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Parts, Amount = 2 } } });
+            Combat.RegisterEnemy(new EnemyData { Id = "wanderer", Name = "流浪者", Hp = 36, MaxHp = 36, Attack = 9, Defense = 4, Speed = 3,
+                Tactic = EnemyTactic.Charge, Loot = new() { new(ResourceType.Parts, 2) } });
             Combat.RegisterEnemy(new EnemyData { Id = "shadow_creature", Name = "暗影生物", Hp = 50, MaxHp = 50, Attack = 8, Defense = 3, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 1 } } });
             Combat.RegisterEnemy(new EnemyData { Id = "corrupted_memory", Name = "腐化记忆", Hp = 70, MaxHp = 70, Attack = 10, Defense = 5, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 3 } } });
             Combat.RegisterEnemy(new EnemyData { Id = "mutant_plant", Name = "变异藤蔓", Hp = 25, MaxHp = 25, Attack = 4, Defense = 6, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Food, Amount = 3 } } });
@@ -587,9 +608,12 @@ namespace LastArchive
             Combat.RegisterEnemy(new EnemyData { Id = "forgotten_one", Name = "被遗忘者", Hp = 100, MaxHp = 100, Attack = 15, Defense = 10, Speed = 2, MemoryShardDropChance = 0.5f, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 5 } } });
             Combat.RegisterEnemy(new EnemyData { Id = "scavenger_gang", Name = "拾荒帮", Hp = 40, MaxHp = 40, Attack = 7, Defense = 3, Speed = 4, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Parts, Amount = 3 }, new ResourceAmount { Type = ResourceType.Food, Amount = 2 } } });
             Combat.RegisterEnemy(new EnemyData { Id = "memory_ghost", Name = "记忆幽灵", Hp = 35, MaxHp = 35, Attack = 9, Defense = 1, Speed = 6, MemoryShardDropChance = 0.3f, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 2 } } });
-            Combat.RegisterEnemy(new EnemyData { Id = "toxic_spore", Name = "毒孢子", Hp = 20, MaxHp = 20, Attack = 6, Defense = 2, Speed = 3, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Medicine, Amount = 1 } } });
-            Combat.RegisterEnemy(new EnemyData { Id = "broken_android", Name = "损坏仿生人", Hp = 80, MaxHp = 80, Attack = 14, Defense = 12, Speed = 2, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Parts, Amount = 8 }, new ResourceAmount { Type = ResourceType.Power, Amount = 3 } } });
-            Combat.RegisterEnemy(new EnemyData { Id = "shadow_swarm", Name = "暗影群", Hp = 45, MaxHp = 45, Attack = 11, Defense = 4, Speed = 5, MemoryShardDropChance = 0.2f, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 1 } } });
+            Combat.RegisterEnemy(new EnemyData { Id = "toxic_spore", Name = "毒孢子", Hp = 20, MaxHp = 20, Attack = 6, Defense = 2, Speed = 3,
+                Tactic = EnemyTactic.Shield, Loot = new() { new(ResourceType.Medicine, 1) } });
+            Combat.RegisterEnemy(new EnemyData { Id = "broken_android", Name = "损坏仿生人", Hp = 100, MaxHp = 100, Attack = 18, Defense = 12, Speed = 2,
+                Tactic = EnemyTactic.Charge, Loot = new() { new(ResourceType.Parts, 8), new(ResourceType.Power, 3) } });
+            Combat.RegisterEnemy(new EnemyData { Id = "shadow_swarm", Name = "暗影群", Hp = 38, MaxHp = 38, Attack = 11, Defense = 4, Speed = 5,
+                Tactic = EnemyTactic.Shield, Loot = new() { new(ResourceType.MemoryShards, 1) } });
             Combat.RegisterEnemy(new EnemyData { Id = "frost_crawler", Name = "霜爬虫", Hp = 55, MaxHp = 55, Attack = 8, Defense = 7, Speed = 3, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.Food, Amount = 4 }, new ResourceAmount { Type = ResourceType.Water, Amount = 2 } } });
             Combat.RegisterEnemy(new EnemyData { Id = "archive_warden", Name = "档案守卫", Hp = 120, MaxHp = 120, Attack = 18, Defense = 15, Speed = 1, MemoryShardDropChance = 0.8f, Loot = new List<ResourceAmount> { new ResourceAmount { Type = ResourceType.MemoryShards, Amount = 8 }, new ResourceAmount { Type = ResourceType.Parts, Amount = 10 } } });
         }
@@ -600,34 +624,34 @@ namespace LastArchive
             // === 原有4主线+2支线 ===
             Quests.AddQuest(new QuestData
             {
-                QuestId = "main_1", Title = "唤醒档案馆", Description = "修复档案馆的基础设施，开始收集记忆碎片。",
+                QuestId = "main_1", Title = "唤醒档案馆", Description = "收集 4 枚记忆碎片。可攻进医院、分两趟走公园和地铁，或派工程队员给中继站通电。",
                 Type = QuestType.MainQuest, Status = QuestStatus.Active,
-                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.CollectResource, TargetId = "MemoryShards", RequiredAmount = 5 } },
+                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.CollectResource, TargetId = "MemoryShards", RequiredAmount = 4 } },
                 Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.Parts, ResourceAmount = 10 }, new QuestReward { ResourceType = ResourceType.Power, ResourceAmount = 5 } }
             });
             Quests.AddQuest(new QuestData
             {
-                QuestId = "main_2", Title = "建造温室", Description = "建造温室以确保食物供应。",
+                QuestId = "main_2", Title = "站稳脚跟", Description = "在日终建立补给路线：温室加水处理站开启本地生产，或建集市并预留 4 零件签约商队。两条都就绪时由你选择。",
                 Type = QuestType.MainQuest, Status = QuestStatus.NotStarted,
-                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.BuildFacility, TargetId = "greenhouse", RequiredAmount = 1 } },
-                Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.Food, ResourceAmount = 15 } },
+                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.CampaignMilestone, TargetId = SupplyMilestone, RequiredAmount = 1 } },
+                Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.Food, ResourceAmount = 10 }, new QuestReward { ResourceType = ResourceType.Water, ResourceAmount = 10 } },
                 RelatedNPCs = new List<string> { "lin_doctor" }
             });
             Quests.AddQuest(new QuestData
             {
-                QuestId = "main_3", Title = "探索旧档案城", Description = "前往旧档案城寻找更多线索。",
+                QuestId = "main_3", Title = "取回旧城档案", Description = "搜寻旧档案城的大厅并返回营地，才能定位广播塔。",
                 Type = QuestType.MainQuest, Status = QuestStatus.NotStarted,
-                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.VisitLocation, TargetId = "archive_ruins", RequiredAmount = 1 } },
+                Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.CampaignMilestone, TargetId = ArchiveMilestone, RequiredAmount = 1 } },
                 Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.MemoryShards, ResourceAmount = 5 } },
                 RelatedLocation = "archive_ruins"
             });
             Quests.AddQuest(new QuestData
             {
-                QuestId = "main_4", Title = "修复广播塔", Description = "修复广播塔以联系外界幸存者。",
+                QuestId = "main_4", Title = "修复广播塔", Description = "从天线平台带回校准数据。安装需 8 零件、5 电力；日终测试另需 3 电力。",
                 Type = QuestType.MainQuest, Status = QuestStatus.NotStarted,
                 Objectives = new List<QuestObjective> {
-                    new QuestObjective { Type = ObjectiveType.VisitLocation, TargetId = "broadcast_tower", RequiredAmount = 1 },
-                    new QuestObjective { Type = ObjectiveType.CollectResource, TargetId = "Parts", RequiredAmount = 20 }
+                    new QuestObjective { Type = ObjectiveType.CampaignMilestone, TargetId = TowerMilestone, RequiredAmount = 1 },
+                    new QuestObjective { Type = ObjectiveType.CampaignMilestone, TargetId = RelayMilestone, RequiredAmount = 1 }
                 },
                 Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.MemoryShards, ResourceAmount = 10 }, new QuestReward { ResourceType = ResourceType.Power, ResourceAmount = 10 } },
                 RelatedLocation = "broadcast_tower"
@@ -668,7 +692,7 @@ namespace LastArchive
             });
             Quests.AddQuest(new QuestData
             {
-                QuestId = "side_5", Title = "王学者的秘密", Description = "王学者似乎知道关于档案城的重要秘密，需要多次对话才能探出真相。",
+                QuestId = "side_5", Title = "王学者的秘密", Description = "在三个不同的日子听王学者讲完旧城的往事。他会交出私人保存的 8 枚碎片。",
                 Type = QuestType.NPCQuest, Status = QuestStatus.NotStarted,
                 Objectives = new List<QuestObjective> { new QuestObjective { Type = ObjectiveType.TalkToNPC, TargetId = "scholar_wang", RequiredAmount = 3 } },
                 Rewards = new List<QuestReward> { new QuestReward { ResourceType = ResourceType.MemoryShards, ResourceAmount = 8 }, new QuestReward { RelationshipTarget = "scholar_wang", RelationshipAmount = 25 } },
@@ -1037,15 +1061,17 @@ namespace LastArchive
 
             string dialogue = DialogueGen.Generate(context);
 
-            // 更新对话类任务目标
-            foreach (var quest in Quests.GetActiveQuests())
-            {
-                Quests.UpdateObjectiveProgress(quest.QuestId, ObjectiveType.TalkToNPC, npcId, 1);
-            }
-
-            // 每名居民每天首次交流会进入日记，也能增加其所在派系的一点声望。
+            // 当日首次交谈同时写入日记并推进任务。读档后沿用同一条记录。
             if (!npc.Memory.Entries.Any(entry => entry.Day == Time.CurrentDay && entry.EventType == MemoryEventType.ImportantDialogue))
             {
+                var scholar = Quests.GetQuest("side_5");
+                if (npcId == "scholar_wang" && scholar.Status == QuestStatus.Active)
+                    dialogue += " " + (scholar.Objectives[0].CurrentProgress switch
+                    {
+                        0 => "我编过那份名册。有几个人在自己的名字旁边写了『别播出去』。",
+                        1 => "后来断了电。有人摸黑来找我，只求再听一遍女儿的声音。我把那盘带子留了下来。",
+                        _ => "这八枚是我私藏的。你拿去吧。开广播之前，记得名册背面还有字。"
+                    });
                 NPCs.AddMemory(npc.Id, new MemoryEntry
                 {
                     MemoryId = Guid.NewGuid().ToString(),
@@ -1056,6 +1082,7 @@ namespace LastArchive
                     Description = dialogue,
                     EmotionalWeight = 1
                 });
+                Quests.UpdateObjectiveProgress("", ObjectiveType.TalkToNPC, npcId, 1);
                 var faction = Factions.GetNPCFaction(npcId);
                 if (faction.HasValue) Factions.ChangeReputation(faction.Value, 1);
             }
@@ -1087,6 +1114,7 @@ namespace LastArchive
             data.MarketTrades = _marketTrades;
             data.LocationVisits = new Dictionary<string, int>(_locationVisits);
             data.Crises = Crises.ActiveCrises;
+            CaptureCampaign(data);
             foreach (var state in data.NPCStates)
             {
                 state.WeaponId = Items.GetEquippedWeapon(state.Id);
@@ -1099,7 +1127,8 @@ namespace LastArchive
                 if (map.Unlocked) data.UnlockedLocations.Add(map.Id);
                 foreach (var room in map.Rooms)
                 {
-                    data.Rooms.Add(new RoomSaveData { MapId = map.Id, RoomId = room.Id, Visited = room.Visited, Locked = room.Locked });
+                    data.Rooms.Add(new RoomSaveData { MapId = map.Id, RoomId = room.Id, Visited = room.Visited, Locked = room.Locked,
+                        Claimed = room.Claimed, Cleared = room.Cleared });
                 }
             }
             return data;
@@ -1118,7 +1147,7 @@ namespace LastArchive
         internal void RestoreSave(SaveData data)
         {
             Initialize(AIProvider);
-            StartNewGame();
+            StartNewGame(data.Scenario);
 
             _lastSettledDay = data.LastSettledDay ?? Math.Max(0,
                 data.CurrentDay - (data.CurrentPhase == GamePhase.Summary ? 0 : 1));
@@ -1147,6 +1176,8 @@ namespace LastArchive
                 if (room == null) continue;
                 room.Visited = roomState.Visited;
                 room.Locked = roomState.Locked;
+                room.Claimed = roomState.Claimed;
+                room.Cleared = roomState.Cleared;
             }
 
             // 恢复时间
@@ -1206,7 +1237,7 @@ namespace LastArchive
                     quest.Status = qsd.Status;
                     for (int i = 0; i < (qsd.ObjectiveProgress?.Count ?? 0) && i < quest.Objectives.Count; i++)
                     {
-                        quest.Objectives[i].CurrentProgress = qsd.ObjectiveProgress[i];
+                        quest.Objectives[i].CurrentProgress = Math.Clamp(qsd.ObjectiveProgress[i], 0, quest.Objectives[i].RequiredAmount);
                     }
                 }
             }
@@ -1263,9 +1294,7 @@ namespace LastArchive
                     achievement.UnlockedDay = data.AchievementDays?.GetValueOrDefault(achId, Time.CurrentDay) ?? Time.CurrentDay;
                 }
             }
-            // Repair older saves captured before early buildings were reconciled.
-            if (!data.LastSettledDay.HasValue)
-                foreach (var quest in Quests.GetActiveQuests()) ReconcileQuest(quest.QuestId);
+            RestoreCampaign(data);
         }
 
         // ===== 事件处理 =====
@@ -1300,9 +1329,12 @@ namespace LastArchive
 
         private void OnCombatEndedEvent(OnCombatEnded evt)
         {
+            Exploration.ResolveEncounter(evt.Victory, evt.InjuredNPCs);
             if (evt.Victory)
             {
                 TotalCombatsWon++;
+                SyncResourceObjectives();
+                Quests.UpdateObjectiveProgress("", ObjectiveType.DefeatEnemy, "", 1);
                 if (TotalCombatsWon >= 3) Achievements.Unlock("warrior");
             }
         }
@@ -1364,6 +1396,7 @@ namespace LastArchive
         private void ReconcileQuest(string questId)
         {
             var quest = Quests.GetQuest(questId);
+            if (quest?.Status != QuestStatus.Active) return;
             foreach (var objective in quest.Objectives)
             {
                 int progress = objective.Type switch
@@ -1374,6 +1407,7 @@ namespace LastArchive
                     ObjectiveType.CollectResource when Enum.TryParse<ResourceType>(objective.TargetId, out var type)
                         => Resources.GetResourceAmount(type),
                     ObjectiveType.SurviveDays => Time.CurrentDay,
+                    ObjectiveType.CampaignMilestone => MilestoneProgress(objective.TargetId),
                     _ => objective.CurrentProgress
                 };
                 objective.CurrentProgress = Math.Clamp(progress, 0, objective.RequiredAmount);
@@ -1383,7 +1417,8 @@ namespace LastArchive
 
         public bool CanSave => !Exploration.IsExploring && !Combat.InCombat;
 
-        public int MarketCapacity => Buildings.GetBuilding("market") is { Built: true } market ? market.Level : 0;
+        public int MarketCapacity => Buildings.GetBuilding("market") is { Built: true } market
+            ? market.Level + (Route == SupplyRoute.Caravan ? 1 : 0) : 0;
         public int MarketTradesLeft => Math.Max(0, MarketCapacity - (_marketDay == Time.CurrentDay ? _marketTrades : 0));
 
         public bool Trade(string offerId)
@@ -1466,8 +1501,12 @@ namespace LastArchive
         {
             if (Time.CurrentPhase != GamePhase.Summary || _lastSettledDay >= Time.CurrentDay || IsGameOver) return;
             _lastSettledDay = Time.CurrentDay;
-            LastDailyEvent = null;
+            LastDailyEvent = _campReport;
             TotalDaysSurvived = Time.CurrentDay;
+            ActivateSupplyRoute();
+            string relayReport = CommissionRelay();
+            if (!string.IsNullOrEmpty(relayReport))
+                LastDailyEvent = string.IsNullOrEmpty(LastDailyEvent) ? relayReport : LastDailyEvent + " " + relayReport;
             Achievements.UpdateDay(Time.CurrentDay);
             Achievements.CheckAchievements(this);
 
@@ -1497,7 +1536,9 @@ namespace LastArchive
             if (!IsGameOver)
             {
                 string worldEvent = DailyEvents.TriggerRandomEvent(this);
-                LastDailyEvent = string.IsNullOrEmpty(worldEvent) ? Time.LastNarrative : worldEvent;
+                SyncResourceObjectives();
+                LastDailyEvent = string.Join(" ", new[] { LastDailyEvent, string.IsNullOrEmpty(worldEvent) ? Time.LastNarrative : worldEvent }
+                    .Where(message => !string.IsNullOrEmpty(message)));
                 if (!string.IsNullOrEmpty(LastDailyEvent)) Console.WriteLine($"  {LastDailyEvent}");
             }
         }

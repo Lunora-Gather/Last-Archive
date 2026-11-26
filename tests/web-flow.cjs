@@ -9,6 +9,7 @@ const { setTimeout: delay } = require('node:timers/promises');
 const { webkit } = require('playwright');
 const { verifySaveTransfer } = require('./save-transfer.cjs');
 const { verifySmallWindow } = require('./small-window.cjs');
+const { verifyCampaignRoutes } = require('./campaign-play.cjs');
 
 const timeout = 12_000;
 const dll = path.resolve(process.argv[2] || 'bin/Release/net10.0/LastArchive.dll');
@@ -101,7 +102,11 @@ async function main() {
     const choice = page.locator('#mapChoices [data-id="' + map + '"]');
     await choice.click();
     await page.locator('#mapChoices [data-id="' + map + '"][aria-pressed="true"]').waitFor();
+    assert.equal(await page.locator('.destinations .site-photo').getAttribute('data-site'), map);
     for (const id of team) await page.locator('input[name="exploreTeamCheckbox"][value="' + id + '"]').check();
+    const selected = await page.locator('.crew:has(:checked) strong').allTextContents();
+    assert.deepEqual((await page.locator('#selectedCrew').textContent()).split('、').sort(), selected.sort());
+    assert.doesNotMatch(await page.locator('.launch-row').innerText(), /补给不足/);
     await action(page, 'explore/start', button(page, '开启野外探索'));
     await page.getByText('搜寻当前房间').waitFor();
   }
@@ -184,35 +189,53 @@ async function main() {
     assert.equal(await page.locator('#saveBtn').isDisabled(), true);
     assert.equal((await (await post(page, 'save')).json()).ok, false);
     await move(page, /前往: 走廊/, 'corridor');
+    assert.ok(await button(page, /前往: 手术室/).isDisabled());
     assert.equal((await action(page, 'explore/search', button(page, '搜寻当前房间'))).combatTriggered, true);
+    assert.equal((await get(page, 'combat/status')).timeline.filter(unit => !unit.isPlayerSide).length, 2);
     let combat;
     for (let turns = 0; turns < 20; turns++) {
-      combat = await action(page, 'combat/action', button(page, /普通攻击/));
+      combat = await action(page, 'combat/action', page.getByRole('button', { name: '普通攻击', exact: true }));
       if (combat.combatEnded) break;
     }
     assert.equal(combat.combatEnded, true);
     assert.equal(combat.victory, true);
     await move(page, /前往: 手术室/, 'surgery');
     const hospitalLoot = await action(page, 'explore/search', button(page, '搜寻当前房间'));
-    assert.equal(hospitalLoot.rewards.find(r => r.type === 'MemoryShards').amount, 2);
+    assert.equal(hospitalLoot.rewards.find(r => r.type === 'MemoryShards').amount, 4);
     await returnToBase(page);
     report('组队、房间移动、搜寻触发战斗、逐回合取胜、拾取碎片及返城');
 
+    assert.match((await get(page, 'explore/status')).maps.find(map => map.id === 'archive_ruins').lockedReason, /补给/);
+    await tab(page, /建筑/, '水处理站');
+    await action(page, 'build', page.locator('.building-card').filter({ hasText: '水处理站' }).getByRole('button', { name: '建造此建筑' }));
+    await action(page, 'nextday', button(page, '推进到下一天'));
+    await day(page, 3);
+    assert.equal((await get(page, 'status')).campaign.route, 'Homestead');
     await startExplore(page, 'archive_ruins', team);
     await action(page, 'explore/search', button(page, '搜寻当前房间'));
     await move(page, /前往: 大厅/, 'hall');
     await action(page, 'explore/search', button(page, '搜寻当前房间'));
+    assert.equal(quest(await get(page, 'quests'), 'main_3'), 'Active');
     await returnToBase(page);
     let quests = await get(page, 'quests');
     assert.deepEqual(['main_1', 'main_2', 'main_3'].map(id => quest(quests, id)),
       ['Completed', 'Completed', 'Completed']);
-    await startExplore(page, 'broadcast_tower', team);
+    assert.match((await get(page, 'explore/status')).maps.find(map => map.id === 'broadcast_tower').lockedReason, /次日/);
+    await action(page, 'nextday', button(page, '推进到下一天'));
+    await startExplore(page, 'broadcast_tower', ['old_zhou', 'anna', 'lin_doctor']);
     await action(page, 'explore/search', button(page, '搜寻当前房间'));
     assert.ok((await get(page, 'items')).some(item => item.id === 'tower_key'));
     await move(page, /前往: 楼梯间/, 'stairs');
     await move(page, /解锁并前往: 天线平台/, 'antenna_deck');
     assert.ok(!(await get(page, 'items')).some(item => item.id === 'tower_key'));
+    await action(page, 'explore/bypass-tower', button(page, '现场接线绕过守备'));
     await returnToBase(page);
+    await tab(page, /任务/, '安装广播组件');
+    await action(page, 'campaign/relay', button(page, '安装广播组件'));
+    assert.equal((await get(page, 'status')).canChooseEnding, false);
+    await action(page, 'nextday', button(page, '推进到下一天'));
+    const campaignDay = (await get(page, 'status')).day;
+    assert.equal(campaignDay, 5);
     quests = await get(page, 'quests');
     assert.equal(quest(quests, 'main_4'), 'Completed');
     report('通过实玩完成四个主线任务并用找到的钥匙打开天线平台');
@@ -225,6 +248,7 @@ async function main() {
     await action(page, 'items/equip', button(page, '确认装备'));
     assert.equal((await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').weapon, '生锈的刀');
     const inventory = await get(page, 'items');
+    const guardFatigue = (await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').fatigue;
     await openProgress(page);
     await action(page, 'save', button(page, '保存当前进度'));
     await openProgress(page);
@@ -235,18 +259,18 @@ async function main() {
     for (let i = 0; i < 2; i++) {
       await openProgress(page);
       await action(page, 'load', button(page, '读取历史存档'));
-      await day(page, 2);
+      await day(page, campaignDay);
       assert.deepEqual(await get(page, 'items'), inventory);
     }
     await stopServer();
     await startServer();
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await day(page, 2);
+    await day(page, campaignDay);
     assert.deepEqual(await get(page, 'items'), inventory);
     assert.equal(quest(await get(page, 'quests'), 'main_4'), 'Completed');
     assert.equal((await get(other, 'status')).day, 1);
     assert.equal((await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').weapon, '生锈的刀');
-    assert.ok((await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').fatigue > 20);
+    assert.equal((await get(page, 'npcs')).find(npc => npc.id === 'iron_guard').fatigue, guardFatigue);
     report('远征疲劳、装备随存档恢复，重开和连续读档状态正确');
 
     const mobile = await browser.newContext({
@@ -254,6 +278,7 @@ async function main() {
     });
     const small = await open(mobile);
     await small.locator('.tabs').getByRole('button', { name: /探索\/战斗/ }).tap();
+    await small.getByRole('button', { name: '更换地点' }).tap();
     await small.locator('#mapChoices').waitFor();
     const widths = await small.evaluate(() => ({
       viewport: innerWidth, document: document.documentElement.scrollWidth,
@@ -314,6 +339,7 @@ async function main() {
     report('自动游玩也能进入下一天并停止');
     await verifySaveTransfer(browser, base);
     await verifySmallWindow(browser, base);
+    await verifyCampaignRoutes(browser, base);
     assert.deepEqual(errors, []);
   } catch (error) {
     console.error(serverOutput);

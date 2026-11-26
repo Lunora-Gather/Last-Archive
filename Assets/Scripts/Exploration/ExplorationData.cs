@@ -7,6 +7,8 @@ using System.Collections.Generic;
 
 namespace LastArchive
 {
+    public enum ExpeditionEvidence { None, Archive, Tower }
+
     /// <summary>
     /// 房间数据
     /// </summary>
@@ -22,9 +24,17 @@ namespace LastArchive
         public List<string> ConnectedRooms = new List<string>();
         public ExplorationEventType? EventType;
         public int MemoryShardReward = 1;
+        public int SearchEngineering;
+        public int SearchPower;
+        public bool IsFiniteCache => EventType == ExplorationEventType.FindResources && LootTable.Count > 0;
         public string SearchItemId;
         public string RequiredItem;     // 需要的物品ID（空=不需要）
         public bool Locked;
+        public bool Claimed;
+        public bool Cleared;
+        public string RequiredClearance;
+        public List<string> Encounter = new();
+        public ExpeditionEvidence Evidence;
     }
 
     /// <summary>
@@ -52,7 +62,8 @@ namespace LastArchive
         public ExplorationEventType Type;
         public string Description;
         public List<ResourceAmount> Rewards = new List<ResourceAmount>();
-        public string EnemyId;         // 如果是战斗事件
+        public List<string> EnemyIds = new();
+        public string EnemyId => EnemyIds.Count > 0 ? EnemyIds[0] : null;
         public int EmotionalWeight;
     }
 
@@ -68,6 +79,8 @@ namespace LastArchive
         public List<ExplorationEvent> Events = new List<ExplorationEvent>();
         public bool HadCombat;
         public bool CombatVictory;
+        public bool ArchiveEvidence;
+        public bool TowerEvidence;
     }
 
     /// <summary>

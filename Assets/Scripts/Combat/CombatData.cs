@@ -7,6 +7,8 @@ using System.Collections.Generic;
 
 namespace LastArchive
 {
+    public enum EnemyTactic { Assault, Charge, Shield }
+
     /// <summary>
     /// 战斗单位
     /// </summary>
@@ -28,6 +30,9 @@ namespace LastArchive
         public int BuffDefense;
         public bool IsStunned;
         public int BleedTurns;
+        public EnemyTactic Tactic;
+        public CombatUnit ChargeTarget;
+        public bool IsCovering;
         public bool IsDead => Hp <= 0;
         public bool IsAlive => Hp > 0 && !IsEscaped;
     }
@@ -47,6 +52,7 @@ namespace LastArchive
         public int Speed;
         public List<ResourceAmount> Loot = new List<ResourceAmount>();
         public float MemoryShardDropChance;
+        public EnemyTactic Tactic;
     }
 
     /// <summary>

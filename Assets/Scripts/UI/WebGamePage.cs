@@ -18,15 +18,17 @@ namespace LastArchive
         {
             ["/assets/game.css"] = new(ReadResource("game.css"), "text/css; charset=utf-8"),
             ["/assets/game.js"] = new(ReadResource("game.js"), "text/javascript; charset=utf-8"),
-            ["/assets/archive-city.jpg"] = new(ReadResource("archive-city.jpg"), "image/jpeg")
+            ["/assets/archive-city.jpg"] = new(ReadResource("archive-city.jpg"), "image/jpeg"),
+            ["/assets/expedition-sites.jpg"] = new(ReadResource("expedition-sites.jpg"), "image/jpeg")
         };
 
         internal static string GetIndexHtml(bool standalone = false)
         {
             if (!standalone) return Index;
-            string image = Convert.ToBase64String(Assets["/assets/archive-city.jpg"].Bytes);
-            string css = Encoding.UTF8.GetString(Assets["/assets/game.css"].Bytes)
-                .Replace("/assets/archive-city.jpg", "data:image/jpeg;base64," + image);
+            string css = Encoding.UTF8.GetString(Assets["/assets/game.css"].Bytes);
+            foreach (var (path, asset) in Assets)
+                if (asset.ContentType.StartsWith("image/", StringComparison.Ordinal))
+                    css = css.Replace(path, $"data:{asset.ContentType};base64,{Convert.ToBase64String(asset.Bytes)}");
             string js = Encoding.UTF8.GetString(Assets["/assets/game.js"].Bytes);
             return Index
                 .Replace("""<link rel="stylesheet" href="/assets/game.css">""", "<style>" + css + "</style>")

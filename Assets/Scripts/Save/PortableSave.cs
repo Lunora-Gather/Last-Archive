@@ -22,6 +22,12 @@ namespace LastArchive
             Converters = { new JsonStringEnumConverter(allowIntegerValues: false) }
         };
 
+        // Targets in the portable format before the campaign changed. Progress was positional.
+        private static readonly Dictionary<string, int[]> PreCampaignTargets = new()
+        {
+            ["main_1"] = [5], ["main_2"] = [1], ["main_3"] = [1], ["main_4"] = [1, 20]
+        };
+
         public static string Export(SaveData data)
         {
             var json = JsonSerializer.Serialize(new { format = Format, version = Version, data }, Options);
@@ -61,6 +67,12 @@ namespace LastArchive
                 if (saveVersion.GetString() != GameConstants.SaveVersion)
                     return (null, "此游戏版本的存档暂不受支持。");
 
+                // The old writer omitted all campaign fields. A modern roster cannot lose its route discriminator.
+                if (payload.TryGetProperty(nameof(SaveData.SupplyRoute), out var route)
+                    ? route.ValueKind != JsonValueKind.String
+                    : payload.TryGetProperty(nameof(SaveData.Scenario), out _) || payload.TryGetProperty(nameof(SaveData.RosterDay), out _))
+                    return (null, InvalidFile);
+
                 var data = payload.Deserialize<SaveData>(Options);
                 return IsValid(data) ? (data, null) : (null, InvalidFile);
             }
@@ -72,13 +84,98 @@ namespace LastArchive
 
         public static bool MatchesWorld(SaveData data, GameManager game)
         {
+            var maps = game.Exploration.GetAllMaps();
+            var mapIds = maps.Select(map => map.Id).ToHashSet();
+            var visitIds = mapIds.Concat(maps.SelectMany(map => map.Rooms.Select(room => room.Id))).ToHashSet();
             return ContainsSameEntries(data.NPCStates.Select(npc => npc.Id), game.NPCs.GetAllNPCs().Select(npc => npc.Id))
                 && ContainsSameEntries(data.BuildingStates.Select(building => building.Id),
                     game.Buildings.GetAllBuildings().Select(building => building.Id))
-                && ContainsSameEntries(data.QuestStates.Select(quest => (quest.QuestId, quest.ObjectiveProgress.Count)),
-                    game.Quests.GetAllQuests().Select(quest => (quest.QuestId, quest.Objectives.Count)))
+                && ContainsSameEntries(data.QuestStates.Select(quest => quest.QuestId),
+                    game.Quests.GetAllQuests().Select(quest => quest.QuestId))
                 && ContainsSameEntries(data.Rooms.Select(room => (room.MapId, room.RoomId)),
-                    game.Exploration.GetAllMaps().SelectMany(map => map.Rooms.Select(room => (map.Id, room.Id))));
+                    maps.SelectMany(map => map.Rooms.Select(room => (map.Id, room.Id))))
+                && data.UnlockedLocations.All(mapIds.Contains)
+                && data.UnlockedLocations.Distinct().Count() == data.UnlockedLocations.Count
+                && data.LocationVisits.Keys.All(visitIds.Contains)
+                && HasValidCampaign(data) && HasValidRoster(data, game)
+                && data.QuestStates.All(state => PrepareObjectives(state, game.Quests.GetQuest(state.QuestId), !data.SupplyRoute.HasValue));
+        }
+
+        private static bool PrepareObjectives(QuestSaveData state, QuestData quest, bool preCampaign)
+        {
+            var counts = state.ObjectiveProgress;
+            bool completed = state.Status == QuestStatus.Completed;
+            bool hasOldTargets = PreCampaignTargets.TryGetValue(state.QuestId, out var oldTargets);
+            // Loading a legacy local checkpoint can leave old completed counts in a modern export.
+            bool inheritedCounts = hasOldTargets && completed && counts.Count == quest.Objectives.Count &&
+                counts.SequenceEqual(oldTargets);
+            bool migrate = hasOldTargets && (preCampaign || inheritedCounts);
+            if (counts.Count != (migrate ? oldTargets.Length : quest.Objectives.Count)) return false;
+            for (int i = 0; i < counts.Count; i++)
+            {
+                int required = migrate ? oldTargets[i] : quest.Objectives[i].RequiredAmount;
+                // SurviveDays records the day reached, which can exceed the target.
+                bool recordsDay = !migrate && quest.Objectives[i].Type == ObjectiveType.SurviveDays;
+                if ((counts[i] > required && !recordsDay) || (completed && counts[i] < required) ||
+                    (state.Status == QuestStatus.NotStarted && counts[i] != 0)) return false;
+            }
+            // Only rewrite the detached import. RestoreCampaign recomputes active chapters from world evidence.
+            if (migrate)
+                state.ObjectiveProgress = quest.Objectives.Select(obj => completed ? obj.RequiredAmount : 0).ToList();
+            return true;
+        }
+
+        private static bool HasValidCampaign(SaveData data)
+        {
+            var chapters = data.QuestStates.ToDictionary(quest => quest.QuestId, quest => quest.Status);
+            bool unlocked = true;
+            for (int chapter = 1; chapter <= 4; chapter++)
+            {
+                var status = chapters[$"main_{chapter}"];
+                if (unlocked != (status != QuestStatus.NotStarted)) return false;
+                unlocked = status == QuestStatus.Completed;
+            }
+            if ((data.IsVictory && (!data.IsGameOver || !unlocked)) ||
+                (data.ChosenEnding.HasValue && (!data.IsVictory || !GameManager.EndingChoices.Contains(data.ChosenEnding.Value))))
+                return false;
+
+            if (!data.SupplyRoute.HasValue)
+                return data.PlannedSupplyRoute == SupplyRoute.Undecided && data.Scenario == CampaignScenario.Standard &&
+                    !data.ArchiveRecovered && !data.TowerCalibrated && !data.RelayInstalled && !data.RelayCommissioned &&
+                    data.ArchiveReturnDay == 0 && data.DepartureDay == 0 && data.RosterDay == 0;
+
+            bool hasRoute = data.SupplyRoute != SupplyRoute.Undecided;
+            return hasRoute == (chapters["main_2"] == QuestStatus.Completed)
+                && (data.PlannedSupplyRoute == SupplyRoute.Undecided || chapters["main_2"] == QuestStatus.Active)
+                && data.ArchiveRecovered == (chapters["main_3"] == QuestStatus.Completed)
+                && (!data.ArchiveRecovered || hasRoute) && (data.ArchiveReturnDay == 0 || data.ArchiveRecovered)
+                && (!data.TowerCalibrated || data.ArchiveRecovered) && (!data.RelayInstalled || data.TowerCalibrated)
+                && (!data.RelayCommissioned || data.RelayInstalled)
+                && data.RelayCommissioned == (chapters["main_4"] == QuestStatus.Completed);
+        }
+
+        private static bool HasValidRoster(SaveData data, GameManager game)
+        {
+            var fielded = data.FieldedResidents;
+            int departuresToday = data.DepartureDay == data.CurrentDay ? data.Departures : 0;
+            bool hasAssignments = data.CampDuty != CampDuty.None || fielded.Count > 0;
+            if ((data.RosterDay != data.CurrentDay && (hasAssignments || data.RosterDay != 0)) ||
+                (departuresToday > 0) != (fielded.Count > 0) ||
+                fielded.Count > departuresToday * GameConfig.MaxExplorationTeamSize ||
+                fielded.Count != fielded.Distinct().Count() || fielded.Any(id => game.NPCs.GetNPC(id) == null)) return false;
+
+            if (data.CampDuty == CampDuty.None) return data.DutyWorker == null;
+            if (string.IsNullOrEmpty(data.DutyWorker) || fielded.Contains(data.DutyWorker)) return false;
+            // Check the saved opening and clinic. Only fixed resident skills come from the destination.
+            // Supplies are prepaid and the worker may have been injured since assignment.
+            if (!GameManager.HasDutySkill(data.CampDuty, game.NPCs.GetNPC(data.DutyWorker))) return false;
+            return data.CampDuty switch
+            {
+                CampDuty.Pump => data.Scenario == CampaignScenario.WaterShortage,
+                CampDuty.Triage => data.Scenario == CampaignScenario.MedicalShortage ||
+                    data.BuildingStates.Any(building => building.Id == "med_room" && building.Built),
+                _ => false
+            };
         }
 
         private static bool ContainsSameEntries<T>(IEnumerable<T> entries, IEnumerable<T> expected)
@@ -98,6 +195,14 @@ namespace LastArchive
                 && IsGameValue(data.StarvationDays) && IsGameValue(data.TotalDaysSurvived)
                 && IsGameValue(data.TotalExplorationsCompleted) && IsGameValue(data.TotalCombatsWon)
                 && IsGameValue(data.MarketDay) && IsGameValue(data.MarketTrades)
+                && data.DepartureDay >= 0 && data.DepartureDay <= data.CurrentDay
+                && data.Departures is >= 0 and <= GameManager.DeparturesPerDay && (data.DepartureDay == 0) == (data.Departures == 0)
+                && data.ArchiveReturnDay >= 0 && data.ArchiveReturnDay <= data.CurrentDay
+                && Enum.IsDefined(data.Scenario) && Enum.IsDefined(data.PlannedSupplyRoute)
+                && Enum.IsDefined(data.CampDuty)
+                && data.FieldedResidents != null
+                && data.FieldedResidents.All(id => !string.IsNullOrEmpty(id))
+                && (!data.SupplyRoute.HasValue || Enum.IsDefined(data.SupplyRoute.Value))
                 && data.LocationVisits != null && data.LocationVisits.Values.All(IsGameValue)
                 && (!data.ChosenEnding.HasValue || Enum.IsDefined(data.ChosenEnding.Value));
 
@@ -120,7 +225,8 @@ namespace LastArchive
                     crisis != null && Enum.IsDefined(crisis.Type) && Enum.IsDefined(crisis.Severity) &&
                     IsGameValue(crisis.StartDay) && IsGameValue(crisis.Duration))
                 && data.Rooms != null && data.Rooms.All(room => room != null &&
-                    !string.IsNullOrEmpty(room.MapId) && !string.IsNullOrEmpty(room.RoomId))
+                    !string.IsNullOrEmpty(room.MapId) && !string.IsNullOrEmpty(room.RoomId) &&
+                    (room.Visited || !room.Claimed && !room.Cleared))
                 && data.UnlockedLocations is { Count: > 0 } && data.UnlockedLocations.All(id => !string.IsNullOrEmpty(id));
 
         private static bool IsValidResident(NPCSaveData npc) =>

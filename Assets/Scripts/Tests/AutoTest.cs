@@ -58,6 +58,15 @@ namespace LastArchive
             TestMainStoryRegression();
             TestSaveSnapshotRegression();
             TestSupplyAndExpeditionDesign();
+            TestCampaignEconomy();
+            TestFiniteCaches();
+            TestLostExpeditionCargo();
+            TestScholarConversations();
+            TestRelayRoofRequirements();
+            TestSupplyRouteChoice();
+            TestScenarioWaterPressure();
+            TestInterruptedShift();
+            TestRelayCityReadiness();
             TestMarketAndEndingDesign();
             TestCombatConsumableDesign();
             TestDefensiveTurnDesign();
@@ -72,6 +81,163 @@ namespace LastArchive
                 Console.WriteLine("\n  ✗ 有测试失败，请检查。");
             }
             return _failCount == 0;
+        }
+
+        private void TestFiniteCaches()
+        {
+            var directory = System.IO.Directory.CreateTempSubdirectory();
+            try
+            {
+                var game = new GameManager(System.IO.Path.Combine(directory.FullName, "save.json"));
+                game.Initialize();
+                game.StartNewGame();
+                bool VisitCache() => game.Exploration.StartExploration("subway_ruins", new() { "old_zhou" }) &&
+                    game.Exploration.MoveToRoom("tunnel") && game.Exploration.MoveToRoom("storage");
+
+                Assert(VisitCache(), "首次远征可以到达地铁仓库");
+                Assert(game.SearchExpeditionRoom()?.Rewards.Sum(loot => loot.Amount) == 16, "地铁仓库首次给固定物资");
+                Assert(game.Exploration.ReturnToBase() != null && game.SaveGame() && game.LoadGame(), "地铁远征结果随存档往返");
+                int parts = game.Resources.GetResourceAmount(ResourceType.Parts);
+                Assert(VisitCache(), "读档后可再次到达仓库");
+                Assert((game.SearchExpeditionRoom()?.Rewards.Count ?? 0) == 0 &&
+                    game.Resources.GetResourceAmount(ResourceType.Parts) == parts, "固定物资搜空后不会因返城或读档刷新");
+                game.Exploration.ReturnToBase();
+            }
+            finally { directory.Delete(recursive: true); }
+        }
+
+        private void TestScholarConversations()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            game.Quests.StartQuest("side_5");
+            Assert(game.TalkToNPC("scholar_wang").Contains("名册"), "王学者第一次讲述名册");
+            game.RestoreSave(game.CaptureSave());
+            game.TalkToNPC("scholar_wang");
+            Assert(game.Quests.GetQuest("side_5").Objectives[0].CurrentProgress == 1, "读档后同一天的对话仅计一次");
+            game.AdvanceDay();
+            Assert(game.TalkToNPC("scholar_wang").Contains("带子"), "第二天听到新的口述档案");
+            game.AdvanceDay();
+            Assert(game.TalkToNPC("scholar_wang").Contains("这八枚") &&
+                game.Quests.GetQuest("side_5").Status == QuestStatus.Completed, "跨三天的口述路线取得私人碎片");
+        }
+
+        private void TestLostExpeditionCargo()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            var parts = game.Resources.GetResourceAmount(ResourceType.Parts);
+            Assert(game.Exploration.StartExploration("subway_ruins", new() { "old_zhou" }) &&
+                game.Exploration.MoveToRoom("tunnel") && game.Exploration.MoveToRoom("storage") &&
+                game.SearchExpeditionRoom()?.Rewards.Any(reward => reward.Type == ResourceType.Parts) == true,
+                "远征队从固定仓库装载零件");
+            game.NPCs.InjureNPC("old_zhou", 100);
+            Assert(game.Exploration.ReturnToBase()?.CollectedResources.Count == 0 &&
+                game.Resources.GetResourceAmount(ResourceType.Parts) == parts, "远征全灭后营地收不到零件");
+        }
+
+        private void TestRelayRoofRequirements()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            bool ReachRoof(string resident) => game.Exploration.StartExploration("relay_station", new() { resident }) &&
+                game.Exploration.MoveToRoom("relay_building") && game.Exploration.MoveToRoom("relay_roof");
+            Assert(ReachRoof("anna") && game.SearchExpeditionRoom() == null, "中继站屋顶没有工程队员时不能直接领碎片");
+            game.Exploration.ReturnToBase();
+            Assert(ReachRoof("old_zhou"), "老周带队抵达中继站屋顶");
+            int power = game.Resources.GetResourceAmount(ResourceType.Power);
+            game.Resources.ConsumeResource(ResourceType.Power, power);
+            Assert(game.SearchExpeditionRoom() == null, "中继站断电时不能回收，且不会耗掉搜索机会");
+            game.Resources.AddResource(ResourceType.Power, power);
+            Assert(game.SearchExpeditionRoom()?.Rewards.Any(loot => loot.Type == ResourceType.MemoryShards && loot.Amount == 4) == true &&
+                game.Resources.GetResourceAmount(ResourceType.Power) == power - 4 &&
+                game.Resources.GetResourceAmount(ResourceType.MemoryShards) == 0, "给中继器通电扣 4 电力，碎片暂存在小队包里");
+            game.Exploration.ReturnToBase();
+            Assert(game.Resources.GetResourceAmount(ResourceType.Power) == power - 4 + 5 &&
+                game.Resources.GetResourceAmount(ResourceType.MemoryShards) == 4, "返城交回碎片才结算首章奖励");
+        }
+
+        private void TestSupplyRouteChoice()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame();
+            game.Resources.AddResource(ResourceType.Parts, 30);
+            game.Resources.AddResource(ResourceType.MemoryShards, 4);
+            game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 4);
+            Assert(game.Buildings.Build("greenhouse") && game.Buildings.Build("water_station") && game.Buildings.Build("market"),
+                "可同时建齐两条补给路线的设施");
+            Assert(game.AdvanceDay() && game.Route == SupplyRoute.Undecided,
+                "两条路线都可用时不替玩家作决定");
+            Assert(game.PlanSupplyRoute(SupplyRoute.Caravan) && game.Route == SupplyRoute.Undecided, "选择商队后等待日终确认");
+            Assert(game.AdvanceDay() && game.Route == SupplyRoute.Caravan && game.DepartureFood == 2,
+                "有双设施时仍允许选择商队，而非强制本地产出");
+        }
+
+        private void TestScenarioWaterPressure()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame(CampaignScenario.WaterShortage);
+            game.Resources.ConsumeResource(ResourceType.Water, 16);
+            var forecast = game.Time.GetSupplyForecast().First(entry => entry.Type == ResourceType.Water);
+            int shortage = 0;
+            EventBus.Subscribe<OnResourceCrisis>(evt => { if (evt.Type == ResourceType.Water) shortage = evt.Shortage; });
+            Assert(forecast.Used == 19 && forecast.Shortfall == 3, "净水故障的冲洗成本计入补给预测");
+            Assert(game.AdvanceDay() && shortage == forecast.Shortfall && shortage == 3, "实际配水短缺与净水故障预测相同");
+        }
+
+        private void TestInterruptedShift()
+        {
+            var game = new GameManager();
+            game.Initialize();
+            game.StartNewGame(CampaignScenario.WaterShortage);
+            Assert(game.AssignCampDuty(CampDuty.Pump, "old_zhou"), "留守水泵先支付电力");
+            game.NPCs.InjureNPC("old_zhou", 100);
+            game.RestoreSave(game.CaptureSave());
+            Assert(game.TodayDutyWorker == "old_zhou" && !game.DutyCanRun &&
+                !game.AssignCampDuty(CampDuty.Pump, "qin_mechanic"), "值班者身亡后读档仍保留已付班次");
+            Assert(game.Time.GetSupplyForecast().First(entry => entry.Type == ResourceType.Water).Produced == 0 &&
+                game.AdvanceDay() && game.TodayDuty == CampDuty.None, "中断的值班没有净水产出，次日重新排班");
+        }
+
+        private void TestRelayCityReadiness()
+        {
+            foreach (var scenario in new[] { CampaignScenario.WaterShortage, CampaignScenario.MedicalShortage })
+            {
+                var game = new GameManager();
+                game.Initialize();
+                game.StartNewGame(scenario);
+                game.Resources.AddResource(ResourceType.MemoryShards, 4);
+                game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 4);
+                game.Resources.AddResource(ResourceType.Power, 30);
+                var team = new List<string> { "old_zhou", "anna" };
+                Assert(game.Buildings.Build("greenhouse") && game.Buildings.Build("water_station") && game.AdvanceDay() &&
+                    game.Exploration.StartExploration("archive_ruins", team) && game.Exploration.MoveToRoom("hall") &&
+                    game.SearchExpeditionRoom() != null && game.Exploration.ReturnToBase() != null && game.AdvanceDay(),
+                    $"{scenario}：取回档案并解码");
+                Assert(game.Exploration.StartExploration("broadcast_tower", new() { "old_zhou" }) &&
+                    game.SearchExpeditionRoom() != null && game.Exploration.MoveToRoom("stairs") && game.Exploration.MoveToRoom("antenna_deck"),
+                    $"{scenario}：单人能到达天线平台");
+                Assert(!game.Exploration.CanBypassTower, $"{scenario}：工程师不能一人同时控线和稳住天线");
+                game.Exploration.ReturnToBase();
+                game.Resources.AddResource(ResourceType.Water, 20);
+                Assert(game.Exploration.StartExploration("broadcast_tower", team) && game.Exploration.MoveToRoom("stairs") &&
+                    game.Exploration.MoveToRoom("antenna_deck") && game.Exploration.BypassTower() &&
+                    game.Exploration.ReturnToBase() != null && game.InstallRelay(), $"{scenario}：工程和搜寻搭档带回数据并安装组件");
+
+                if (scenario == CampaignScenario.WaterShortage)
+                    game.Resources.ConsumeResource(ResourceType.Water, game.Resources.GetResourceAmount(ResourceType.Water));
+                Assert(game.AdvanceDay() && !game.CanChooseEnding, $"{scenario}：优先解决营地压力，广播暂缓试送电");
+                if (scenario == CampaignScenario.WaterShortage)
+                    game.Resources.AddResource(ResourceType.Water, 25);
+                else
+                    game.NPCs.HealNPC("lily_nurse", 30);
+                Assert(game.AdvanceDay() && game.CanChooseEnding, $"{scenario}：补足营地后恢复通电测试");
+            }
         }
 
         private void TestDaySettlementRegression()
@@ -99,24 +265,38 @@ namespace LastArchive
             var game = new GameManager();
             game.Initialize();
             game.StartNewGame();
-            Assert(game.Buildings.Build("greenhouse"), "可在任务激活前建造温室");
-            game.Resources.AddResource(ResourceType.MemoryShards, 5);
-            game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 5);
-            Assert(game.Quests.GetQuest("main_2").Status == QuestStatus.Completed, "已有温室补记为已完成");
-
-            var team = new List<string> { "lin_doctor" };
+            Assert(game.Buildings.Build("greenhouse") && game.Buildings.Build("water_station"), "可在任务激活前建造补给设施");
+            game.Resources.AddResource(ResourceType.MemoryShards, 4);
+            game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 4);
+            Assert(game.Quests.GetQuest("main_2").Status == QuestStatus.Active, "日终之前仍需确认补给路线");
+            var team = new List<string> { "old_zhou" };
+            Assert(!game.Exploration.StartExploration("archive_ruins", team), "补给未确认时旧城封锁");
+            Assert(game.AdvanceDay() && game.Route == SupplyRoute.Homestead &&
+                game.Time.GetSupplyForecast().First(item => item.Type == ResourceType.Food).Produced == 8, "已建双设施在日终确认为本地生产");
             Assert(game.Exploration.StartExploration("archive_ruins", team), "进入旧档案城");
-            Assert(game.Quests.GetQuest("main_3").Status == QuestStatus.Completed, "进入地图完成主线访问目标");
+            Assert(game.Quests.GetQuest("main_3").Status == QuestStatus.Active, "到访旧城不能替代回收档案");
             Assert(game.Exploration.SearchRoom()?.Type == ExplorationEventType.FindMemoryShard, "旧档案城大门掉落碎片");
             Assert(game.Exploration.SearchRoom() == null, "同一次探索不能重复搜索同一房间");
+            Assert(game.Exploration.MoveToRoom("hall") &&
+                game.SearchExpeditionRoom()?.Description.Contains("旧城档案") == true, "在大厅找到档案");
             game.Exploration.ReturnToBase();
-
-            game.Resources.AddResource(ResourceType.Parts, 20);
-            game.Quests.UpdateResourceObjectives(ResourceType.Parts, 20);
+            Assert(game.Quests.GetQuest("main_3").Status == QuestStatus.Completed, "返城才提交旧城档案");
+            Assert(!game.Exploration.StartExploration("broadcast_tower", team) && game.AdvanceDay(), "旧城档案次日解码");
+            team.Add("anna");
             Assert(game.Exploration.StartExploration("broadcast_tower", team), "进入广播塔");
-            Assert(game.Quests.GetQuest("main_4").Status == QuestStatus.Completed, "进入广播塔后主线可完成");
             Assert(!game.AdvanceDay() && !game.SaveGame(), "探索中禁止推进和保存");
+            game.SearchExpeditionRoom();
+            Assert(game.Exploration.MoveToRoom("stairs") && game.Exploration.MoveToRoom("antenna_deck") &&
+                game.Exploration.BypassTower(), "工程达标并花电力绕过守备队");
             game.Exploration.ReturnToBase();
+            int parts = game.Resources.GetResourceAmount(ResourceType.Parts);
+            Assert(game.InstallRelay() && !game.InstallRelay() && !game.CanChooseEnding &&
+                game.Resources.GetResourceAmount(ResourceType.Parts) == parts - GameManager.RelayPartsCost,
+                "广播组件只安装一次，实际扣除材料");
+            game.Resources.ConsumeResource(ResourceType.Power, game.Resources.GetResourceAmount(ResourceType.Power));
+            Assert(game.AdvanceDay() && !game.CanChooseEnding && game.RelayInstalled &&
+                game.Quests.GetQuest("main_4").Status == QuestStatus.Active, "组件安装后不能以断电结算通过通电测试");
+            game.Resources.AddResource(ResourceType.Power, 8);
             game.Time.Restore(15, GamePhase.Day);
             Assert(game.AdvanceDay() && game.IsGameOver && game.IsVictory, "广播塔主线触发并保留胜利结果");
             game.Resources.AddResource(ResourceType.MemoryShards, 40);
@@ -219,6 +399,54 @@ namespace LastArchive
                     game.Resources.GetResourceAmount(ResourceType.MemoryShards) == shards - GameConfig.UploadShardCost, "上传扣除碎片并进入选定结局");
                 Assert(game.SaveGame() && game.LoadGame() && game.Endings.CalculateEnding(game).Type == EndingType.Upload,
                     "主动选择的结局随存档恢复");
+            }
+            finally
+            {
+                directory.Delete(recursive: true);
+            }
+        }
+
+        private void TestCampaignEconomy()
+        {
+            var directory = System.IO.Directory.CreateTempSubdirectory();
+            try
+            {
+                var game = new GameManager(System.IO.Path.Combine(directory.FullName, "save.json"));
+                game.Initialize();
+                game.StartNewGame();
+                var team = new List<string> { "anna" };
+                int initialFood = game.Resources.GetResourceAmount(ResourceType.Food);
+                Assert(game.Exploration.StartExploration("ruined_park", team), "第一次远征扣除出发补给");
+                game.Exploration.ReturnToBase();
+                Assert(game.Exploration.StartExploration("subway_ruins", team), "同日可改走另一条外出路线");
+                game.Exploration.ReturnToBase();
+                Assert(!game.Exploration.StartExploration("old_factory", team) &&
+                    game.Resources.GetResourceAmount(ResourceType.Food) == initialFood - 10,
+                    "第三次远征被拒绝且不扣食物");
+                Assert(game.SaveGame() && game.LoadGame() && game.DeparturesLeft == 0, "重新读档保留当天已用远征额度");
+                game.Resources.AddResource(ResourceType.MemoryShards, 4);
+                game.Quests.UpdateResourceObjectives(ResourceType.MemoryShards, 4);
+                Assert(game.Buildings.Build("market"), "可用集市建立商队路线");
+                int parts = game.Resources.GetResourceAmount(ResourceType.Parts);
+                int partsAfterContract = -1;
+                EventBus.Subscribe<OnQuestStatusChanged>(evt =>
+                {
+                    if (evt.QuestId == "main_2" && evt.NewStatus == QuestStatus.Completed)
+                        partsAfterContract = game.Resources.GetResourceAmount(ResourceType.Parts);
+                });
+                Assert(game.AdvanceDay() && game.Route == SupplyRoute.Caravan &&
+                    partsAfterContract == parts - GameManager.CaravanDeposit,
+                    "签约商队在结算时扣除零件");
+                Assert(game.DeparturesLeft == 2 && game.DepartureFood == 2 && game.DepartureWater == 1 &&
+                    game.MarketCapacity == 2, "商队增加交易额度并降低出发补给");
+                Assert(game.SaveGame() && game.LoadGame() && game.Route == SupplyRoute.Caravan,
+                    "商队路线随存档恢复");
+
+                var legacy = game.Save.LoadGame();
+                legacy.SupplyRoute = null;
+                Assert(game.Save.SaveGame(legacy) && game.LoadGame() && game.Route == SupplyRoute.Homestead &&
+                    game.Quests.GetQuest("main_2").Status == QuestStatus.Completed,
+                    "旧档保留已完成章节并补上生产路线");
             }
             finally
             {
@@ -417,7 +645,7 @@ namespace LastArchive
             Assert(maps.Count == 8, "地图数=8");
 
             // 开始探索
-            var teamIds = new List<string> { "anna" };
+            var teamIds = new List<string> { "iron_guard", "big_hu", "anna" };
             Assert(game.Exploration.StartExploration("abandoned_hospital", teamIds), "开始探索成功");
             Assert(game.Exploration.IsExploring, "正在探索");
             Assert(game.Exploration.CurrentRoom != null, "当前房间不为空");
@@ -425,6 +653,10 @@ namespace LastArchive
 
             // 移动到 corridor
             Assert(game.Exploration.MoveToRoom("corridor"), "移动到急诊走廊 corridor");
+            Assert(!game.Exploration.MoveToRoom("surgery"), "守卫未清除时无法进入手术室");
+            Assert(game.SearchExpeditionRoom()?.EnemyIds.Count == 2 && game.Combat.InCombat, "走廊启动两敌遭遇");
+            for (int turn = 0; turn < 20 && game.Combat.InCombat; turn++)
+                game.Combat.ExecutePlayerAction(CombatAction.Attack);
 
             // 移动到 surgery
             Assert(game.Exploration.MoveToRoom("surgery"), "移动到手术室 surgery");
@@ -608,7 +840,7 @@ namespace LastArchive
             var main3 = game.Quests.GetQuest("main_3");
             Assert(main3 != null, "主线3存在");
             game.Quests.StartQuest("main_3");
-            game.Quests.UpdateVisitLocationObjectives("archive_ruins");
+            game.Quests.UpdateObjectiveProgress("main_3", ObjectiveType.CampaignMilestone, GameManager.ArchiveMilestone, 1);
             var archiveOrder = game.Factions.GetFaction(FactionType.ArchiveOrder);
             Assert(archiveOrder != null && archiveOrder.Unlocked, "完成主线3后档案教团解锁");
         }
@@ -1279,19 +1511,12 @@ namespace LastArchive
                     // 搜索几个房间
                     for (int i = 0; i < 3; i++)
                     {
-                        var evt = game.Exploration.SearchRoom();
-                        if (evt != null && evt.Type == ExplorationEventType.EnemyEncounter && !string.IsNullOrEmpty(evt.EnemyId))
+                        game.SearchExpeditionRoom();
+                        if (game.Combat.InCombat)
                         {
-                            // 战斗
-                            if (game.Combat.StartCombat(teamIds, new List<string> { evt.EnemyId }))
-                            {
-                                int turns = 0;
-                                while (game.Combat.InCombat && turns < 15)
-                                {
-                                    game.Combat.ExecutePlayerAction(CombatAction.Attack);
-                                    turns++;
-                                }
-                            }
+                            int turns = 0;
+                            while (game.Combat.InCombat && turns++ < 30)
+                                game.Combat.ExecutePlayerAction(CombatAction.Attack);
                         }
 
                         var connected = game.Exploration.GetConnectedRooms();

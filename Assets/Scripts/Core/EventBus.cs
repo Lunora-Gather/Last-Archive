@@ -96,7 +96,7 @@ namespace LastArchive
     public struct OnCombatStarted { public string MapId; public string RoomId; }
 
     /// <summary>战斗结束</summary>
-    public struct OnCombatEnded { public bool Victory; }
+    public struct OnCombatEnded { public bool Victory; public List<string> InjuredNPCs; }
 
     /// <summary>任务状态变化</summary>
     public struct OnQuestStatusChanged { public string QuestId; public QuestStatus OldStatus; public QuestStatus NewStatus; }

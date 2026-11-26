@@ -17,6 +17,9 @@ namespace LastArchive
         public GamePhase CurrentPhase { get; private set; } = GamePhase.Day;
         public bool IsPaused { get; set; } = false;
         public string LastNarrative { get; private set; }
+        public int WaterFlush { get; internal set; }
+        public int LastWaterShortfall { get; private set; }
+        private int DailyWaterNeed(int population) => population * GameConstants.DailyWaterConsumptionPerNPC + WaterFlush;
 
         private ResourceSystem _resourceSystem;
         private NPCSystem _npcSystem;
@@ -24,10 +27,14 @@ namespace LastArchive
         private QuestSystem _questSystem;
         private MemorySummarizer _memorySummarizer;
         private EventGenerator _eventGenerator;
+        private readonly Action _settleCampDuty;
+        private readonly Func<int> _plannedWater;
+        internal int ClinicRecovery => _buildingSystem.GetBuilding("med_room") is { Built: true } clinic ? 5 * clinic.Level : 0;
 
         public TimeSystem(ResourceSystem resourceSystem, NPCSystem npcSystem,
             BuildingSystem buildingSystem, QuestSystem questSystem,
-            MemorySummarizer memorySummarizer, EventGenerator eventGenerator)
+            MemorySummarizer memorySummarizer, EventGenerator eventGenerator,
+            Action settleCampDuty = null, Func<int> plannedWater = null)
         {
             _resourceSystem = resourceSystem;
             _npcSystem = npcSystem;
@@ -35,6 +42,8 @@ namespace LastArchive
             _questSystem = questSystem;
             _memorySummarizer = memorySummarizer;
             _eventGenerator = eventGenerator;
+            _settleCampDuty = settleCampDuty;
+            _plannedWater = plannedWater;
         }
 
         /// <summary>开始新游戏</summary>
@@ -88,10 +97,11 @@ namespace LastArchive
             {
                 int stock = _resourceSystem.GetResourceAmount(type);
                 int produced = operating.Sum(building => building.DailyOutput.Get(type) * building.Level);
+                if (type == ResourceType.Water && CurrentPhase != GamePhase.Summary) produced += _plannedWater?.Invoke() ?? 0;
                 int used = operating.Sum(building => building.DailyConsumption.Get(type)) + (type switch
                 {
                     ResourceType.Food => population * GameConstants.DailyFoodConsumptionPerNPC,
-                    ResourceType.Water => population * GameConstants.DailyWaterConsumptionPerNPC,
+                    ResourceType.Water => DailyWaterNeed(population),
                     _ => 0
                 });
                 int balance = stock + produced - used;
@@ -105,18 +115,19 @@ namespace LastArchive
         {
             // 1. 建筑产出
             _buildingSystem.ProduceDailyResources();
+            _settleCampDuty?.Invoke();
 
             // 2. 每日资源消耗
             int npcCount = _npcSystem.GetAliveCount();
             int foodNeed = npcCount * GameConstants.DailyFoodConsumptionPerNPC;
-            int waterNeed = npcCount * GameConstants.DailyWaterConsumptionPerNPC;
+            int waterNeed = DailyWaterNeed(npcCount);
+            LastWaterShortfall = Math.Max(0, waterNeed - _resourceSystem.GetResourceAmount(ResourceType.Water));
             double foodCoverage = foodNeed == 0 ? 1 : Math.Min(1, (double)_resourceSystem.GetResourceAmount(ResourceType.Food) / foodNeed);
             double waterCoverage = waterNeed == 0 ? 1 : Math.Min(1, (double)_resourceSystem.GetResourceAmount(ResourceType.Water) / waterNeed);
-            _resourceSystem.ApplyDailyConsumption(npcCount, buildingPowerCost: 0);
+            _resourceSystem.ApplyDailyConsumption(npcCount, buildingPowerCost: 0, extraWater: WaterFlush);
 
             // 3. NPC每日状态变化与关系演化
-            int clinicRecovery = _buildingSystem.GetBuilding("med_room") is { Built: true } clinic ? 5 * clinic.Level : 0;
-            _npcSystem.ApplyDailyChanges(clinicRecovery, Math.Min(foodCoverage, waterCoverage));
+            _npcSystem.ApplyDailyChanges(ClinicRecovery, Math.Min(foodCoverage, waterCoverage));
             bool hasFoodCrisis = _resourceSystem.GetResourceAmount(ResourceType.Food) <= 0;
             bool hasWaterCrisis = _resourceSystem.GetResourceAmount(ResourceType.Water) <= 0;
             _npcSystem.UpdateNPCRelationships(hasFoodCrisis, hasWaterCrisis);

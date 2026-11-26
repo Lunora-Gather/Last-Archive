@@ -4,6 +4,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text;
 
 namespace LastArchive
@@ -16,6 +17,7 @@ namespace LastArchive
         private ResourceSystem _resourceSystem;
         private NPCSystem _npcSystem;
         private ItemSystem _itemSystem;
+        private readonly Action<ResourceType, int> _collectReward;
         private Dictionary<string, EnemyData> _enemyTemplates = new Dictionary<string, EnemyData>();
         private Random _rng = new Random();
 
@@ -30,11 +32,13 @@ namespace LastArchive
 
         public CombatUnit ActiveUnit => (ActionTimeline != null && CurrentTimelineIndex < ActionTimeline.Count) ? ActionTimeline[CurrentTimelineIndex] : null;
 
-        public CombatSystem(ResourceSystem resourceSystem, NPCSystem npcSystem, ItemSystem itemSystem = null)
+        public CombatSystem(ResourceSystem resourceSystem, NPCSystem npcSystem, ItemSystem itemSystem = null,
+            Action<ResourceType, int> collectReward = null)
         {
             _resourceSystem = resourceSystem;
             _npcSystem = npcSystem;
             _itemSystem = itemSystem;
+            _collectReward = collectReward ?? resourceSystem.AddResource;
         }
 
         /// <summary>注册敌人模板</summary>
@@ -103,6 +107,7 @@ namespace LastArchive
                     Speed = template.Speed,
                     IsPlayerSide = false,
                     Role = "Enemy",
+                    Tactic = template.Tactic,
                     SkillUsed = false,
                     BuffDefense = 0
                 });
@@ -151,6 +156,7 @@ namespace LastArchive
             var attacker = ActiveUnit;
             if (attacker == null || attacker.IsDead)
             {
+                if (!PlayerUnits.Any(unit => unit.IsAlive)) return EndCombat(false, false);
                 AdvanceTimeline();
                 if (InCombat && !IsPlayerTurn) AutoRunEnemyTurns(result);
                 result.CombatLog = CombatLog.ToString();
@@ -159,6 +165,7 @@ namespace LastArchive
 
             // 防御持续到该队员下一次行动，跨越时间轴起点。
             attacker.IsDefending = false;
+            attacker.IsCovering = false;
 
             // 流血结算
             if (attacker.BleedTurns > 0)
@@ -169,6 +176,7 @@ namespace LastArchive
                 if (attacker.Hp <= 0)
                 {
                     CombatLog.AppendLine($"{attacker.Name} 因流血倒下了！");
+                    if (!PlayerUnits.Any(unit => unit.IsAlive)) return EndCombat(false, false);
                     AdvanceTimeline();
                     if (InCombat && !IsPlayerTurn) AutoRunEnemyTurns(result);
                     result.CombatLog = CombatLog.ToString();
@@ -194,8 +202,7 @@ namespace LastArchive
                         var enemies = GetAliveUnits(EnemyUnits);
                         if (enemies.Count == 0) return EndCombat(true, false);
                         var target = enemies[Math.Min(targetIndex, enemies.Count - 1)];
-                        int damage = Math.Max(1, attacker.Attack - target.Defense / 2);
-                        target.Hp = Math.Max(0, target.Hp - damage);
+                        int damage = Strike(target, attacker.Attack);
                         CombatLog.AppendLine($"{attacker.Name} 攻击 {target.Name}，造成 {damage} 伤害！");
                         if (target.IsDead)
                         {
@@ -342,22 +349,38 @@ namespace LastArchive
                     return;
                 }
 
-                // 随机攻击一个玩家队员
-                var target = alivePlayers[_rng.Next(alivePlayers.Count)];
-                int totalDefense = target.Defense + target.BuffDefense;
-                target.BuffDefense = 0;
-                int damage = Math.Max(1, attacker.Attack - totalDefense / 2);
-                if (target.IsDefending)
+                var shieldTarget = ShieldTarget(attacker);
+                if (attacker.Tactic == EnemyTactic.Shield && shieldTarget != null)
                 {
-                    damage = Math.Max(1, (int)(damage * GameConstants.DefenseDamageReduction));
+                    shieldTarget.BuffDefense = 12;
+                    CombatLog.AppendLine($"{attacker.Name} 为 {shieldTarget.Name} 提供了 12 点护盾。");
+                    AdvanceTimeline();
+                    continue;
                 }
-                target.Hp = Math.Max(0, target.Hp - damage);
-                CombatLog.AppendLine($"{attacker.Name} 攻击 {target.Name}，造成 {damage} 伤害！");
+                if (attacker.Tactic == EnemyTactic.Charge && attacker.ChargeTarget == null)
+                {
+                    attacker.ChargeTarget = alivePlayers.MinBy(player => player.Hp);
+                    CombatLog.AppendLine($"{attacker.Name} 锁定 {attacker.ChargeTarget.Name}，下次行动会重击！");
+                    AdvanceTimeline();
+                    continue;
+                }
+
+                bool heavy = attacker.Tactic == EnemyTactic.Charge;
+                var target = attacker.ChargeTarget?.IsAlive == true ? attacker.ChargeTarget : alivePlayers[_rng.Next(alivePlayers.Count)];
+                attacker.ChargeTarget = null;
+                var guard = alivePlayers.FirstOrDefault(player => player.IsCovering);
+                if (guard != null)
+                {
+                    guard.IsCovering = false;
+                    if (guard != target) CombatLog.AppendLine($"{guard.Name} 挡在 {target.Name} 身前。");
+                    target = guard;
+                }
+                int damage = Strike(target, heavy ? attacker.Attack * 2 : attacker.Attack);
+                CombatLog.AppendLine($"{attacker.Name} {(heavy ? "重击" : "攻击")} {target.Name}，造成 {damage} 伤害！");
 
                 if (target.IsDead)
                 {
                     CombatLog.AppendLine($"{target.Name} 倒下了！");
-                    result.InjuredNPCs.Add(target.Id);
                 }
 
                 // 检查我方是否全灭
@@ -374,6 +397,44 @@ namespace LastArchive
 
                 AdvanceTimeline();
             }
+        }
+
+        private CombatUnit ShieldTarget(CombatUnit attacker) => EnemyUnits.FirstOrDefault(unit =>
+            unit != attacker && unit.IsAlive && unit.BuffDefense == 0);
+
+        public string EnemyIntent(CombatUnit unit)
+        {
+            if (unit.IsDead || unit.IsPlayerSide) return "";
+            if (unit.IsStunned) return "受控 · 下次跳过";
+            if (unit.Tactic == EnemyTactic.Charge)
+                return unit.ChargeTarget == null ? "蓄力并锁定低生命队员" :
+                    unit.ChargeTarget.IsAlive ? $"下一动重击 · {unit.ChargeTarget.Name}" : "下一动重击";
+            if (unit.Tactic == EnemyTactic.Shield && ShieldTarget(unit) is { } target)
+                return $"下一动为 {target.Name} 加盾";
+            return "普通攻击";
+        }
+
+        internal static int DamageAgainst(CombatUnit target, int attack, bool pierceArmor = false)
+        {
+            int defense = (pierceArmor ? 0 : target.Defense) + target.BuffDefense;
+            int damage = Math.Max(1, attack - defense / 2);
+            return target.IsDefending ? Math.Max(1, (int)(damage * GameConstants.DefenseDamageReduction)) : damage;
+        }
+
+        public string ChargeForecast(CombatUnit unit)
+        {
+            if (!unit.IsAlive || unit.IsStunned || unit.ChargeTarget?.IsAlive != true) return "";
+            var recipient = PlayerUnits.FirstOrDefault(ally => ally.IsAlive && ally.IsCovering) ?? unit.ChargeTarget;
+            var damage = DamageAgainst(recipient, 2 * unit.Attack);
+            return $"按当前防护，{recipient.Name}将承受 {damage} 伤害（生命 {recipient.Hp} → {Math.Max(0, recipient.Hp - damage)}）";
+        }
+
+        private static int Strike(CombatUnit target, int attack, bool pierceArmor = false)
+        {
+            int damage = DamageAgainst(target, attack, pierceArmor);
+            target.BuffDefense = 0;
+            target.Hp = Math.Max(0, target.Hp - damage);
+            return damage;
         }
 
         /// <summary>执行职业特色技能</summary>
@@ -408,8 +469,7 @@ namespace LastArchive
                         {
                             var target = enemies[Math.Min(targetIndex, enemies.Count - 1)];
                             CombatLog.AppendLine($"{attacker.Name} 释放技能【破甲射击】！");
-                            int damage = attacker.Attack + 5;
-                            target.Hp = Math.Max(0, target.Hp - damage);
+                            int damage = Strike(target, attacker.Attack + 5, pierceArmor: true);
                             CombatLog.AppendLine($"  对 {target.Name} 造成 {damage} 伤害！(无视防御)");
                             if (_rng.Next(100) < 40)
                             {
@@ -430,10 +490,16 @@ namespace LastArchive
                         var alivePlayers = GetAliveUnits(PlayerUnits);
                         foreach (var p in alivePlayers)
                         {
-                            p.BuffDefense += 5;
-                            CombatLog.AppendLine($"  {p.Name} 获得护盾防壁 (+5 防御)！");
+                            p.BuffDefense = Math.Max(p.BuffDefense, 12);
+                            CombatLog.AppendLine($"  {p.Name} 获得护盾防壁 (+12 防御)！");
                         }
                     }
+                    break;
+
+                case "Guard":
+                    attacker.IsDefending = true;
+                    attacker.IsCovering = true;
+                    CombatLog.AppendLine($"{attacker.Name} 释放技能【挺身挡击】，会挡下一次攻击。");
                     break;
 
                 case "Engineer":
@@ -443,8 +509,12 @@ namespace LastArchive
                         {
                             var target = enemies[Math.Min(targetIndex, enemies.Count - 1)];
                             CombatLog.AppendLine($"{attacker.Name} 释放技能【机械重载】！");
-                            int damage = Math.Max(1, (int)(attacker.Attack * 1.5) - target.Defense / 2);
-                            target.Hp = Math.Max(0, target.Hp - damage);
+                            if (target.ChargeTarget != null)
+                            {
+                                target.ChargeTarget = null;
+                                CombatLog.AppendLine($"  打断了 {target.Name} 的蓄力！");
+                            }
+                            int damage = Strike(target, (int)(attacker.Attack * 1.5));
                             CombatLog.AppendLine($"  对 {target.Name} 造成 {damage} 机械重击伤害！");
                             if (target.IsDead)
                             {
@@ -461,8 +531,7 @@ namespace LastArchive
                         {
                             var target = enemies[Math.Min(targetIndex, enemies.Count - 1)];
                             CombatLog.AppendLine($"{attacker.Name} 释放技能【洞察破绽】！");
-                            int damage = Math.Max(1, attacker.Attack - target.Defense / 2);
-                            target.Hp = Math.Max(0, target.Hp - damage);
+                            int damage = Strike(target, attacker.Attack);
                             target.Defense = Math.Max(0, target.Defense - 3);
                             target.BleedTurns = 2;
                             CombatLog.AppendLine($"  对 {target.Name} 造成 {damage} 伤害，使其防御降低 3 并使其流血！");
@@ -521,12 +590,12 @@ namespace LastArchive
                     {
                         foreach (var loot in template.Loot)
                         {
-                            _resourceSystem.AddResource(loot.Type, loot.Amount);
+                            _collectReward(loot.Type, loot.Amount);
                             result.Rewards.Add(loot);
                         }
                         if (template.MemoryShardDropChance > 0 && _rng.NextDouble() < template.MemoryShardDropChance)
                         {
-                            _resourceSystem.AddResource(ResourceType.MemoryShards, 1);
+                            _collectReward(ResourceType.MemoryShards, 1);
                             result.Rewards.Add(new ResourceAmount(ResourceType.MemoryShards, 1));
                             CombatLog.AppendLine("获得了记忆碎片！");
                         }
@@ -543,28 +612,17 @@ namespace LastArchive
             {
                 var npc = _npcSystem.GetNPC(unit.Id);
                 if (npc == null) continue;
+                if (unit.Hp < npc.Health) result.InjuredNPCs.Add(unit.Id);
 
                 if (unit.IsDead)
                 {
                     // 战损：生命值扣尽，状态设为Dead
                     _npcSystem.InjureNPC(unit.Id, npc.Health);
-                    if (!result.InjuredNPCs.Contains(unit.Id))
-                    {
-                        result.InjuredNPCs.Add(unit.Id);
-                    }
                 }
                 else
                 {
                     // 存活：同步生命值，并根据当前生命值判定是否受伤
                     npc.Health = unit.Hp;
-                    if (unit.Hp < unit.MaxHp && !escaped)
-                    {
-                        // 非撤退情况下的扣血记为受伤
-                        if (!result.InjuredNPCs.Contains(unit.Id))
-                        {
-                            result.InjuredNPCs.Add(unit.Id);
-                        }
-                    }
                     if (unit.Hp < 30 && npc.Status != NPCStatus.Injured)
                     {
                         _npcSystem.SetNPCStatus(unit.Id, NPCStatus.Injured);
@@ -574,7 +632,7 @@ namespace LastArchive
 
             InCombat = false;
             result.CombatLog = CombatLog.ToString();
-            EventBus.Publish(new OnCombatEnded { Victory = victory });
+            EventBus.Publish(new OnCombatEnded { Victory = victory, InjuredNPCs = result.InjuredNPCs });
             return result;
         }
 
@@ -605,7 +663,7 @@ namespace LastArchive
             foreach (var u in EnemyUnits)
             {
                 string activeMarker = (active != null && active.Id == u.Id && !IsPlayerTurn) ? "▶ " : "  ";
-                string status = u.IsDead ? "(击败)" : "";
+                string status = u.IsDead ? "(击败)" : EnemyIntent(u);
                 sb.AppendLine($"{activeMarker}{u.Name} HP:{u.Hp}/{u.MaxHp} {status}");
             }
             return sb.ToString();

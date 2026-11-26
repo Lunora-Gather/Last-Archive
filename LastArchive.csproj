@@ -19,7 +19,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Assets/Web/index.html;Assets/Web/game.css;Assets/Web/game.js;Assets/Web/archive-city.jpg">
+    <EmbeddedResource Include="Assets/Web/index.html;Assets/Web/game.css;Assets/Web/game.js;Assets/Web/archive-city.jpg;Assets/Web/expedition-sites.jpg">
       <LogicalName>LastArchive.Web.%(Filename)%(Extension)</LogicalName>
     </EmbeddedResource>
   </ItemGroup>

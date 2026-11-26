@@ -48,7 +48,8 @@ namespace LastArchive
         Engineer,  // 工程师
         Scout,     // 侦察兵
         Child,     // 儿童
-        Stranger   // 陌生人
+        Stranger,  // 陌生人
+        Guard      // 守卫
     }
 
     /// <summary>
@@ -118,7 +119,8 @@ namespace LastArchive
         SurviveDays,      // 存活天数
         TalkToNPC,        // 与NPC对话
         DefeatEnemy,      // 击败敌人
-        ReachRoom         // 到达房间
+        ReachRoom,        // 到达房间
+        CampaignMilestone
     }
 
     /// <summary>

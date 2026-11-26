@@ -33,6 +33,18 @@ namespace LastArchive
         static readonly Color TEXT_DIM = Color.FromArgb(169, 176, 179);
         static readonly Color BTN_BG = Color.FromArgb(36, 42, 46);
         static readonly Color BTN_HOVER = Color.FromArgb(70, 70, 100);
+
+        public WinFormsGame()
+        {
+            Text = "最后档案城 - Last Archive";
+            ClientSize = new Size(900, 700);
+            BackColor = BG;
+            Load += (s, e) => {
+                InitUI();
+                StartGame();
+            };
+        }
+
         private void InitUI()
         {
             // 顶部状态栏
@@ -43,19 +55,15 @@ namespace LastArchive
 
             // 分割容器：上面Tab，下面日志
             _split = new SplitContainer { Dock = DockStyle.Fill, Orientation = Orientation.Horizontal,
-                SplitterDistance = 550, BackColor = BG, Panel1MinSize = 200, Panel2MinSize = 100 };
+                Size = ClientSize, SplitterDistance = 550, BackColor = BG, Panel1MinSize = 200, Panel2MinSize = 100 };
             Controls.Add(_split);
             _split.BringToFront();
 
             // Tab
             _tabs = new TabControl { Dock = DockStyle.Fill, Font = new Font("Microsoft YaHei UI", 10F) };
-            AddTab("📊 概览", DrawOverview);
-            AddTab("👥 居民", DrawNPCs);
-            AddTab("🏗 建筑", DrawBuildings);
-            AddTab("📜 任务", DrawQuests);
-            AddTab("🎒 背包", DrawItems);
-            AddTab("🏛 派系", DrawFactions);
-            AddTab("⚠ 危机", DrawCrisis);
+            foreach (var name in new[] { "📊 概览", "👥 居民", "🏗 建筑", "📜 任务", "🎒 背包", "🏛 派系", "⚠ 危机" })
+                _tabs.TabPages.Add(new TabPage(name) { BackColor = BG, ForeColor = TEXT, AutoScroll = true });
+            _tabs.SelectedIndex = 0;
             _split.Panel1.Controls.Add(_tabs);
 
             // 日志
@@ -74,6 +82,7 @@ namespace LastArchive
                 new ToolStripMenuItem("🔄 刷新", null, (s,e)=>RefreshCurrentTab()),
                 new ToolStripMenuItem("🤖 自动游玩", null, (s,e)=>ToggleAutoPlay()),
                 new ToolStripMenuItem("🆕 新游戏", null, (s,e)=>DoNewGame()),
+                new ToolStripMenuItem("选择战役开局…", null, (s,e)=>DoNewGame(chooseScenario: true)),
                 new ToolStripMenuItem("集市交换", null, (s,e)=>ShowMarketChoice()),
                 new ToolStripMenuItem("记忆的去向", null, (s,e)=>ShowEndingChoice()),
                 new ToolStripMenuItem("📊 终局统计", null, (s,e)=>ShowEndStats()),
@@ -96,20 +105,12 @@ namespace LastArchive
             _tabs.SelectedIndexChanged += (s, e) => RefreshCurrentTab();
         }
 
-        private void AddTab(string name, Action<TabPage> drawer)
-        {
-            var page = new TabPage(name) { BackColor = BG, ForeColor = TEXT, AutoScroll = true };
-            _tabs.TabPages.Add(page);
-            drawer(page);
-        }
-
-        private void StartGame()
+        private void StartGame(CampaignScenario scenario = CampaignScenario.Standard)
         {
             _game = new GameManager();
             _game.Initialize(new MockAIProvider());
-            _game.StartNewGame();
-            AddLog("欢迎来到档案城！第1天开始。");
-            UpdateTopBar();
+            _game.StartNewGame(scenario);
+            AddLog($"欢迎来到档案城！{CampaignUI.CampStatus(_game)}，第1天开始。");
             RefreshCurrentTab();
         }
 
@@ -133,7 +134,8 @@ namespace LastArchive
         {
             if (_tabs.SelectedIndex < 0 || _game == null) return;
             var page = _tabs.TabPages[_tabs.SelectedIndex];
-            page.Controls.Clear();
+            page.SuspendLayout();
+            while (page.Controls.Count > 0) page.Controls[page.Controls.Count - 1].Dispose();
             switch (_tabs.SelectedIndex)
             {
                 case 0: DrawOverview(page); break;
@@ -144,6 +146,7 @@ namespace LastArchive
                 case 5: DrawFactions(page); break;
                 case 6: DrawCrisis(page); break;
             }
+            page.ResumeLayout();
             UpdateTopBar();
         }
 
@@ -152,7 +155,7 @@ namespace LastArchive
         private void DrawOverview(TabPage page)
         {
             int y = 10;
-            L(page, "📊 档案城概览", 10, y, 16, true, ACCENT); y += 36;
+            L(page, $"📊 档案城概览 · {CampaignUI.CampStatus(_game)}", 10, y, 16, true, ACCENT); y += 36;
 
             // 操作按钮组
             var btnExplore = MakeBtn("🗺 开始探索", 10, y, 150, 32);
@@ -168,6 +171,7 @@ namespace LastArchive
             page.Controls.Add(btnTalk);
 
             var btnWork = MakeBtn("🔧 分配工作", 430, y, 150, 32);
+            btnWork.Enabled = _game.CanSave && !_game.IsGameOver;
             btnWork.Click += (s, e) => ShowWorkDialog();
             page.Controls.Add(btnWork);
 
@@ -185,7 +189,24 @@ namespace LastArchive
             var mission = _game.Quests.GetActiveQuests().FirstOrDefault(quest => quest.Type == QuestType.MainQuest);
             if (mission != null)
             {
-                L(page, "当前主线　" + mission.Title, 10, y, 11, false, TEXT); y += 27;
+                L(page, "当前主线　" + mission.Title + "　" + mission.Description, 10, y, 10, false, TEXT); y += 27;
+            }
+            DrawCampOptions(page, ref y);
+            if (_game.CanInstallRelay)
+            {
+                var install = MakeBtn(CampaignUI.InstallOption(_game), 10, y, 350, 32);
+                install.Enabled = _game.CanAffordRelay;
+                install.Click += (s, e) =>
+                {
+                    if (_game.InstallRelay()) AddLog("广播组件已安装，推进一天完成通电测试。");
+                    RefreshCurrentTab();
+                };
+                page.Controls.Add(install);
+                y += 38;
+            }
+            if (_game.RelayAwaitingTest)
+            {
+                L(page, CampaignUI.RelayForecast(_game), 10, y, 11, true, ACCENT); y += 27;
             }
 
             L(page, "📦 资源", 10, y, 14, true, ACCENT2); y += 30;
@@ -202,6 +223,53 @@ namespace LastArchive
             {
                 L(page, $"  {(b.Built ? "✅" : "⬜")} {b.Name}: {(b.Built ? $"Lv{b.Level}" : "未建")}", 10, y, 11, false, b.Built ? SUCCESS : TEXT_DIM);
                 y += 22;
+            }
+        }
+
+        private void DrawCampOptions(TabPage page, ref int y)
+        {
+            L(page, CampaignUI.SupplyStatus(_game), 10, y, 11, true, ACCENT); y += 26;
+            bool inCamp = _game.CanSave && !_game.IsGameOver;
+            if (_game.SupplyDecisionOpen)
+            {
+                foreach (var route in new[] { SupplyRoute.Homestead, SupplyRoute.Caravan })
+                {
+                    var plan = MakeBtn(CampaignUI.RouteOption(_game, route), 10, y, 520, 30);
+                    plan.Enabled = inCamp && _game.SupplyRouteReady(route);
+                    plan.Click += (s, e) => {
+                        if (_game.PlanSupplyRoute(route)) AddLog(CampaignUI.SupplyStatus(_game));
+                        RefreshCurrentTab();
+                    };
+                    page.Controls.Add(plan);
+                    y += 34;
+                }
+            }
+            foreach (var patient in _game.GetCareForecast())
+            {
+                L(page, CampaignUI.CareStatus(patient), 10, y, 10, false, TEXT); y += 23;
+            }
+            if (_game.TodayDuty != CampDuty.None)
+            {
+                L(page, CampaignUI.AssignedDuty(_game), 10, y, 10, true, ACCENT2); y += 26;
+                return;
+            }
+            foreach (var duty in CampaignUI.Duties.Where(_game.OffersDuty))
+            {
+                L(page, CampaignUI.DutyOption(_game, duty), 10, y, 10, false, TEXT); y += 24;
+                var candidates = CampaignUI.DutyCandidates(_game, duty);
+                if (candidates.Count == 0) continue;
+                var workers = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList,
+                    Location = new Point(10, y), Width = 135 };
+                workers.Items.AddRange(candidates.Select(npc => npc.Name).ToArray());
+                workers.SelectedIndex = 0;
+                var assign = MakeBtn("指派值班（今日留守）", 155, y, 180, 30);
+                assign.Enabled = inCamp && _game.AffordsDuty(duty);
+                assign.Click += (s, e) => {
+                    if (_game.AssignCampDuty(duty, candidates[workers.SelectedIndex].Id)) AddLog(CampaignUI.AssignedDuty(_game));
+                    RefreshCurrentTab();
+                };
+                page.Controls.AddRange(new Control[] { workers, assign });
+                y += 36;
             }
         }
 
@@ -265,7 +333,8 @@ namespace LastArchive
             {
                 Color c = b.Built ? SUCCESS : TEXT;
                 L(page, $"{b.Name}: {(b.Built ? $"已建 Lv{b.Level}" : "未建造")}", 10, y, 12, true, c); y += 22;
-                L(page, $"  {b.Description}", 10, y, 10, false, TEXT_DIM); y += 22;
+                string dutyHint = b.Id == "med_room" && !_game.OffersDuty(CampDuty.Triage) ? " 建成后可安排医疗值班。" : "";
+                L(page, $"  {b.Description}{dutyHint}", 10, y, 10, false, TEXT_DIM); y += 22;
 
                 // 建造/升级按钮
                 if (!b.Built)
@@ -416,64 +485,156 @@ namespace LastArchive
 
         private void ShowExploreDialog()
         {
+            if (_game.Exploration.IsExploring) { ShowFieldRoom(); return; }
             var maps = _game.Exploration.GetAllMaps();
             using (var dlg = new Form())
             {
                 dlg.Text = "选择探索地图";
-                dlg.Size = new Size(500, 400);
+                dlg.ClientSize = new Size(660, 395);
                 dlg.StartPosition = FormStartPosition.CenterParent;
                 dlg.BackColor = BG;
                 dlg.ForeColor = TEXT;
 
-                var lbl = new Label { Text = "选择地图和队员：", Location = new Point(10, 10), AutoSize = true, ForeColor = ACCENT, Font = new Font("Microsoft YaHei UI", 12F, FontStyle.Bold) };
+                var lbl = new Label
+                {
+                    Text = $"出发 {_game.DeparturesLeft} 次 · {_game.DepartureFood} 食物 / {_game.DepartureWater} 饮水",
+                    Location = new Point(10, 10), AutoSize = true, ForeColor = ACCENT
+                };
                 dlg.Controls.Add(lbl);
 
-                var mapList = new CheckedListBox { Location = new Point(10, 50), Size = new Size(220, 250), BackColor = PANEL, ForeColor = TEXT };
+                var mapList = new ListBox { Location = new Point(10, 50), Size = new Size(300, 220), BackColor = PANEL, ForeColor = TEXT };
                 foreach (var m in maps) mapList.Items.Add(m.Name);
                 dlg.Controls.Add(mapList);
 
-                var npcList = new CheckedListBox { Location = new Point(250, 50), Size = new Size(220, 250), BackColor = PANEL, ForeColor = TEXT };
-                foreach (var n in _game.NPCs.GetAllNPCs()) if (n.IsAlive) npcList.Items.Add(n.Name);
+                var candidates = _game.NPCs.GetAllNPCs().Where(_game.CanExploreResident).ToList();
+                var npcList = new CheckedListBox { Location = new Point(320, 50), Size = new Size(330, 220),
+                    CheckOnClick = true, BackColor = PANEL, ForeColor = TEXT };
+                foreach (var npc in candidates)
+                    npcList.Items.Add($"{npc.Name} · 工程 {npc.Engineering} / 搜寻 {npc.Scavenging} / 战斗 {npc.Combat}");
                 dlg.Controls.Add(npcList);
 
                 var lbl1 = new Label { Text = "地图", Location = new Point(10, 30), AutoSize = true, ForeColor = ACCENT2 };
-                var lbl2 = new Label { Text = "队员", Location = new Point(250, 30), AutoSize = true, ForeColor = ACCENT2 };
+                var lbl2 = new Label { Text = $"可出发队员（最多 {GameConfig.MaxExplorationTeamSize} 人）", Location = new Point(320, 30), AutoSize = true, ForeColor = ACCENT2 };
                 dlg.Controls.Add(lbl1); dlg.Controls.Add(lbl2);
 
-                var btnGo = new Button { Text = "出发！", Location = new Point(150, 320), Size = new Size(100, 30), BackColor = ACCENT, ForeColor = Color.Black };
+                var details = new Label { Location = new Point(10, 275), Size = new Size(640, 56), ForeColor = TEXT };
+                var readiness = new Label { Location = new Point(10, 335), Size = new Size(640, 20), ForeColor = ACCENT2 };
+                dlg.Controls.AddRange(new Control[] { details, readiness });
+                var btnGo = new Button { Text = "出发！", Location = new Point(10, 358), Size = new Size(100, 30), BackColor = ACCENT, ForeColor = Color.Black };
+                void UpdateDeparture(int teamSize)
+                {
+                    var map = maps[mapList.SelectedIndex];
+                    details.Text = map.Description;
+                    string issue = _game.ExpeditionLockReason(map.Id);
+                    if (issue.Length == 0) issue = CampaignUI.DepartureIssue(_game, candidates.Count);
+                    if (issue.Length == 0 && (teamSize == 0 || teamSize > GameConfig.MaxExplorationTeamSize))
+                        issue = $"请选择 1 至 {GameConfig.MaxExplorationTeamSize} 名队员。";
+                    readiness.Text = issue.Length > 0 ? issue : "队伍可以出发。";
+                    btnGo.Enabled = issue.Length == 0;
+                }
+                mapList.SelectedIndexChanged += (s, e) => UpdateDeparture(npcList.CheckedItems.Count);
+                npcList.ItemCheck += (s, e) => UpdateDeparture(npcList.CheckedItems.Count + (e.NewValue == CheckState.Checked ? 1 : -1));
+                mapList.SelectedIndex = 0;
                 btnGo.Click += (s, e) => {
-                    if (mapList.CheckedItems.Count == 0 || npcList.CheckedItems.Count == 0) { MessageBox.Show("请选择地图和队员"); return; }
-                    string mapId = maps[mapList.CheckedIndices[0]].Id;
-                    var teamIds = new List<string>();
-                    foreach (int idx in npcList.CheckedIndices)
+                    var map = maps[mapList.SelectedIndex];
+                    var teamIds = npcList.CheckedIndices.Cast<int>().Select(i => candidates[i].Id).ToList();
+                    if (_game.Exploration.StartExploration(map.Id, teamIds))
                     {
-                        var npc = _game.NPCs.GetAllNPCs().Where(n => n.IsAlive).ToList()[idx];
-                        teamIds.Add(npc.Id);
-                    }
-                    if (_game.Exploration.StartExploration(mapId, teamIds))
-                    {
-                        AddLog($"🗺 开始探索 {maps[mapList.CheckedIndices[0]].Name}");
-                        // 自动搜索几个房间
-                        for (int i = 0; i < 3 && _game.Exploration.IsExploring; i++)
-                        {
-                            _game.Exploration.SearchRoom();
-                            var connected = _game.Exploration.GetConnectedRooms();
-                            if (connected.Count > 0) _game.Exploration.MoveToRoom(connected[0].Id);
-                        }
-                        _game.Exploration.ReturnToBase();
-                        AddLog("✅ 探索完成，返回基地");
-                        RefreshCurrentTab();
+                        AddLog($"🗺 开始探索 {map.Name}");
                         dlg.Close();
                     }
-                    else AddLog("❌ 无法开始探索");
+                    else readiness.Text = "无法出发，请重新检查物资与队员状态。";
                 };
                 dlg.Controls.Add(btnGo);
                 dlg.ShowDialog(this);
             }
+            if (_game.Exploration.IsExploring) ShowFieldRoom();
+        }
+
+        private void ShowFieldRoom()
+        {
+            using var field = new Form { Text = "远征", Size = new Size(525, 550), StartPosition = FormStartPosition.CenterParent };
+            var controls = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, AutoScroll = true };
+            field.Controls.Add(controls);
+            void Draw(string message = "")
+            {
+                while (controls.Controls.Count > 0) controls.Controls[0].Dispose();
+                void Line(string text) => controls.Controls.Add(new Label { Text = text, AutoSize = true, MaximumSize = new Size(475, 0) });
+                void Choice(string text, Action action, bool enabled = true)
+                {
+                    var button = new Button { Text = text, AutoSize = true, Enabled = enabled };
+                    button.Click += (s, e) => action();
+                    controls.Controls.Add(button);
+                }
+
+                if (!string.IsNullOrEmpty(message)) Line(message);
+                var expedition = _game.Exploration;
+                if (_game.Combat.InCombat)
+                {
+                    Line(_game.Combat.GetStatusText());
+                    Line($"正在行动 · {_game.Combat.ActiveUnit.Name}");
+                    var targets = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList };
+                    foreach (var enemy in _game.Combat.EnemyUnits.Where(unit => unit.IsAlive)) targets.Items.Add(enemy.Name);
+                    targets.SelectedIndex = 0;
+                    controls.Controls.Add(targets);
+                    void Act(CombatAction action)
+                    {
+                        var result = _game.Combat.ExecutePlayerAction(action, targets.SelectedIndex);
+                        Draw(result == null ? "" : result.Victory ? "战斗胜利。" : "战斗结束。");
+                    }
+                    Choice("普通攻击", () => Act(CombatAction.Attack));
+                    Choice("职业技能", () => Act(CombatAction.UseSkill), !_game.Combat.ActiveUnit.SkillUsed);
+                    Choice("防御", () => Act(CombatAction.Defend));
+                    Choice("使用药品", () => Act(CombatAction.UseMedicine), _game.Resources.HasEnough(ResourceType.Medicine, 1));
+                    Choice("撤退", () => Act(CombatAction.Escape));
+                    return;
+                }
+
+                Line($"{expedition.CurrentMap.Name} · {expedition.CurrentRoom.Name}");
+                Line(expedition.CurrentRoom.Description);
+                if (expedition.ActiveCheck is { } check)
+                {
+                    Line(check.Description);
+                    foreach (var id in expedition.TeamNPCIds)
+                    {
+                        var npc = _game.NPCs.GetNPC(id);
+                        if (!npc.IsAlive) continue;
+                        Choice($"{npc.Name} · 工程 {npc.Engineering} / 医疗 {npc.Medical} / 战斗 {npc.Combat}", () =>
+                        {
+                            expedition.ResolveSkillCheck(id, out string result, out _);
+                            Draw(result);
+                        });
+                    }
+                }
+                else
+                {
+                    string searchIssue = CampaignUI.SearchIssue(expedition);
+                    if (searchIssue.Length > 0) Line(searchIssue);
+                    Choice("搜寻当前房间", () => Draw(_game.SearchExpeditionRoom()?.Description), searchIssue.Length == 0);
+                    if (expedition.CanOfferTowerBypass)
+                    {
+                        Line(ExplorationSystem.BypassRequirements);
+                        if (!expedition.CanBypassTower) Line(expedition.TowerBypassIssue);
+                        Choice("现场接线", () => Draw(expedition.BypassTower() ? "已取得校准数据，返回基地后可安装组件。" : expedition.TowerBypassIssue),
+                            expedition.CanBypassTower);
+                    }
+                    foreach (var room in expedition.GetConnectedRooms())
+                    {
+                        string issue = CampaignUI.EntryIssue(_game, room);
+                        Choice($"前往{room.Name}  {issue}", () => { expedition.MoveToRoom(room.Id); Draw(); }, issue.Length == 0);
+                    }
+                }
+                Choice("返回基地", () => { expedition.ReturnToBase(); field.Close(); });
+            }
+
+            Draw();
+            field.ShowDialog(this);
+            RefreshCurrentTab();
         }
 
         private void ShowCombatDialog()
         {
+            if (_game.Exploration.IsExploring) { ShowFieldRoom(); return; }
             var enemies = new[] { "wanderer", "shadow_creature", "mutant_plant", "scavenger_gang", "memory_ghost", "toxic_spore" };
             using (var dlg = new Form())
             {
@@ -576,14 +737,15 @@ namespace LastArchive
                     ForeColor = TEXT, RowHeadersVisible = false, AllowUserToAddRows = false, AutoSizeColumnsMode = DataGridViewAutoSizeColumnsMode.Fill };
                 grid.Columns.Add("NPC", "NPC");
                 grid.Columns.Add("Work", "工作");
+                grid.Columns[0].ReadOnly = grid.Columns[1].ReadOnly = true;
                 var workCol = new DataGridViewComboBoxColumn { HeaderText = "分配工作" };
                 foreach (var wt in Enum.GetNames(typeof(WorkType))) workCol.Items.Add(wt);
                 grid.Columns.Add(workCol);
 
-                foreach (var npc in _game.NPCs.GetAllNPCs())
+                foreach (var npc in _game.NPCs.GetAllNPCs().Where(n => n.CanWork && n.Id != _game.TodayDutyWorker))
                 {
-                    if (!npc.IsAlive) continue;
                     int row = grid.Rows.Add();
+                    grid.Rows[row].Tag = npc;
                     grid.Rows[row].Cells[0].Value = npc.Name;
                     grid.Rows[row].Cells[1].Value = npc.CurrentWork.ToString();
                     grid.Rows[row].Cells[2].Value = npc.CurrentWork.ToString();
@@ -592,11 +754,11 @@ namespace LastArchive
 
                 var btn = new Button { Text = "确认", Location = new Point(180, 310), Size = new Size(100, 30), BackColor = ACCENT, ForeColor = Color.Black };
                 btn.Click += (s, e) => {
-                    var npcs = _game.NPCs.GetAllNPCs().Where(n => n.IsAlive).ToList();
-                    for (int i = 0; i < npcs.Count && i < grid.Rows.Count; i++)
+                    foreach (DataGridViewRow row in grid.Rows)
                     {
-                        string workStr = grid.Rows[i].Cells[2].Value?.ToString() ?? "None";
-                        if (Enum.TryParse<WorkType>(workStr, out var wt)) npcs[i].CurrentWork = wt;
+                        var npc = (NPCInstance)row.Tag;
+                        if (Enum.TryParse<WorkType>(row.Cells[2].Value?.ToString(), out var work) && work != npc.CurrentWork)
+                            _game.NPCs.AssignWork(npc.Id, work);
                     }
                     AddLog("🔧 工作分配完成");
                     RefreshCurrentTab();
@@ -752,16 +914,23 @@ namespace LastArchive
             RefreshCurrentTab();
         }
 
-        private int ChooseOption(string title, IEnumerable<string> choices)
+        private int ChooseOption(string title, IEnumerable<string> choices, IReadOnlyList<string> descriptions = null)
         {
-            using var dialog = new Form { Text = title, ClientSize = new Size(360, 110),
+            int buttonY = descriptions == null ? 58 : 120;
+            using var dialog = new Form { Text = title, ClientSize = new Size(360, buttonY + 52),
                 FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent,
                 MinimizeBox = false, MaximizeBox = false };
             var list = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(14, 15), Width = 332 };
             list.Items.AddRange(choices.Cast<object>().ToArray());
+            if (descriptions != null)
+            {
+                var detail = new Label { Location = new Point(14, 48), Size = new Size(332, 65) };
+                list.SelectedIndexChanged += (s, e) => detail.Text = descriptions[list.SelectedIndex];
+                dialog.Controls.Add(detail);
+            }
             list.SelectedIndex = 0;
-            var confirm = new Button { Text = "确认", Location = new Point(177, 58), DialogResult = DialogResult.OK };
-            var cancel = new Button { Text = "取消", Location = new Point(257, 58), DialogResult = DialogResult.Cancel };
+            var confirm = new Button { Text = "确认", Location = new Point(177, buttonY), DialogResult = DialogResult.OK };
+            var cancel = new Button { Text = "取消", Location = new Point(257, buttonY), DialogResult = DialogResult.Cancel };
             dialog.Controls.AddRange(new Control[] { list, confirm, cancel });
             dialog.AcceptButton = confirm;
             dialog.CancelButton = cancel;
@@ -788,12 +957,20 @@ namespace LastArchive
             MessageBox.Show($"读档成功！第{_game.Time.CurrentDay}天", "读档");
         }
 
-        private void DoNewGame()
+        private void DoNewGame(bool chooseScenario = false)
         {
-            if (MessageBox.Show("确定要开始新游戏？当前进度将丢失。", "新游戏",
+            var scenario = CampaignScenario.Standard;
+            if (chooseScenario)
+            {
+                var openings = GameManager.Openings;
+                int choice = ChooseOption("选择战役开局", openings.Select(o => o.Title), openings.Select(o => o.Description).ToArray());
+                if (choice < 0) return;
+                scenario = openings[choice].Scenario;
+            }
+            if (MessageBox.Show(this, "确定要开始新游戏？当前进度将丢失。", "新游戏",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
             _logBox.Clear();
-            StartGame();
+            StartGame(scenario);
         }
 
         private void ToggleAutoPlay()
@@ -805,6 +982,7 @@ namespace LastArchive
                 _autoPlayTimer = new System.Windows.Forms.Timer();
                 _autoPlayTimer.Interval = 2000;
                 _autoPlayTimer.Tick += (s, e) => {
+                    if (Application.OpenForms.Cast<Form>().Any(form => form.Modal)) return;
                     if (_game.IsGameOver)
                     {
                         ToggleAutoPlay();

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#131618">
+  <meta name="theme-color" content="#182136">
   <title>最后档案城 · Last Archive</title>
   <link rel="stylesheet" href="/assets/game.css">
   <script defer src="/assets/game.js"></script>
@@ -13,8 +13,8 @@
   <header class="topbar">
     <div class="topbar-inner">
       <button class="brand" data-tab="0" aria-label="最后档案城总览">
-        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-        <span><b>LAST ARCHIVE</b><small>最后档案城</small></span>
+        <span class="brand-mark" aria-hidden="true"><i></i></span>
+        <span class="wordmark"><b>最后档案城</b><small lang="en">Last Archive</small></span>
       </button>
       <div class="day-status">
         <span id="statusDot" class="status-dot" aria-hidden="true"></span>
@@ -26,39 +26,39 @@
       <div class="header-actions">
         <button id="progressBtn" class="quiet" aria-haspopup="dialog" aria-controls="progressModal">进度管理</button>
         <button id="themeToggleBtn" class="icon-button" aria-label="切换浅色主题" title="切换浅色主题">◐</button>
-        <button id="advanceBtn" class="primary" disabled>推进到下一天 <span aria-hidden="true">→</span></button>
+        <button id="advanceBtn" class="primary" disabled>推进到下一天</button>
       </div>
     </div>
   </header>
 
-  <div class="workspace">
-    <aside class="navigation">
+    <div class="navigation">
       <nav class="tabs" aria-label="游戏导航">
-        <button data-tab="0" aria-current="page"><span aria-hidden="true">◈</span>概览</button>
-        <button data-tab="1"><span aria-hidden="true">◎</span>居民</button>
-        <button data-tab="2"><span aria-hidden="true">▤</span>建筑</button>
-        <button data-tab="3"><span aria-hidden="true">≡</span>任务</button>
-        <button data-tab="4"><span aria-hidden="true">▣</span>背包</button>
-        <button data-tab="8"><span aria-hidden="true">⌖</span>探索/战斗</button>
-        <button data-tab="5"><span aria-hidden="true">◇</span>派系</button>
-        <button data-tab="6"><span aria-hidden="true">△</span>危机</button>
-        <button data-tab="7"><span aria-hidden="true">◉</span>AI</button>
+        <button data-tab="0" aria-current="page">概览</button>
+        <button data-tab="8">探索/战斗</button>
+        <button data-tab="1">居民</button>
+        <button data-tab="2">建筑</button>
+        <button data-tab="3">任务</button>
+        <button data-tab="4">背包</button>
+        <button data-tab="5">派系</button>
+        <button data-tab="6">危机</button>
+        <button data-tab="7">AI</button>
       </nav>
-    </aside>
+    </div>
 
+  <div class="workspace">
     <main id="main-content" tabindex="-1">
-      <div id="resbar" class="resource-strip" aria-label="当前物资"></div>
+      <div id="resourceDock"><div id="resbar" class="resource-strip" aria-label="当前物资"></div></div>
       <div class="dashboard">
         <section class="stage">
           <header class="page-header">
-            <h1 id="pageTitle">正在接入档案城</h1>
+            <h1 id="pageTitle" tabindex="-1">正在接入档案城</h1>
             <p id="pageContext"></p>
           </header>
           <a id="openGame" href="/" target="_blank" rel="noopener" hidden>在独立窗口打开游戏</a>
           <p id="actionFeedback" class="feedback" role="status" aria-live="polite"></p>
           <div id="page"></div>
         </section>
-        <aside class="intel" aria-label="当前进度与城镇动态">
+        <aside id="cityIntel" class="intel" aria-label="当前进度与城镇动态">
           <section id="briefing" class="panel briefing"></section>
           <section class="panel events">
             <header><h2>行动记录</h2><span id="eventCount"></span></header>

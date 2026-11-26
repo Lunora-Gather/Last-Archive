@@ -245,11 +245,11 @@ namespace LastArchive
             }
         }
 
-        private GameManager CreateGame()
+        private GameManager CreateGame(CampaignScenario scenario = CampaignScenario.Standard)
         {
             var game = new GameManager(_savePath);
             game.Initialize();
-            game.StartNewGame();
+            game.StartNewGame(scenario);
             return game;
         }
 
@@ -288,7 +288,7 @@ namespace LastArchive
             // POST /api/load - 读档
             if (path == "/api/load" && method == "POST") return DoLoad();
             // POST /api/newgame - 新游戏
-            if (path == "/api/newgame" && method == "POST") return DoNewGame();
+            if (path == "/api/newgame" && method == "POST") return DoNewGame(req);
             // POST /api/build - 建造
             if (path == "/api/build" && method == "POST") return DoBuild(req);
             // POST /api/upgrade - 升级
@@ -314,6 +314,7 @@ namespace LastArchive
             if (path == "/api/explore/move" && method == "POST") return DoExploreMove(req);
             // POST /api/explore/search - 探索搜索
             if (path == "/api/explore/search" && method == "POST") return DoExploreSearch();
+            if (path == "/api/explore/bypass-tower" && method == "POST") return DoBypassTower();
             // POST /api/explore/skillcheck - 探索判定
             if (path == "/api/explore/skillcheck" && method == "POST") return DoExploreSkillCheck(req);
             // POST /api/explore/return - 探索返城
@@ -328,6 +329,9 @@ namespace LastArchive
             if (path == "/api/market" && method == "GET") return GetMarket();
             if (path == "/api/market" && method == "POST") return DoTrade(req);
             if (path == "/api/ending/choose" && method == "POST") return DoChooseEnding(req);
+            if (path == "/api/campaign/duty" && method == "POST") return DoCampDuty(req);
+            if (path == "/api/campaign/supply" && method == "POST") return DoPlanSupply(req);
+            if (path == "/api/campaign/relay" && method == "POST") return DoInstallRelay();
             if (path == "/api/items/equip" && method == "POST") return DoItemAction(req, equip: true);
             if (path == "/api/items/use" && method == "POST") return DoItemAction(req, equip: false);
 
@@ -348,6 +352,33 @@ namespace LastArchive
                 canChooseEnding = _game.CanChooseEnding,
                 uploadShardCost = GameConfig.UploadShardCost,
                 expeditionFatigueLimit = GameConfig.ExpeditionFatigueLimit,
+                campaign = new
+                {
+                    route = _game.Route.ToString(),
+                    plannedRoute = _game.PlannedSupplyRoute.ToString(),
+                    supplyDecisionOpen = _game.SupplyDecisionOpen,
+                    homesteadReady = _game.SupplyRouteReady(SupplyRoute.Homestead),
+                    caravanReady = _game.SupplyRouteReady(SupplyRoute.Caravan),
+                    caravanDeposit = GameManager.CaravanDeposit,
+                    scenario = _game.Scenario.ToString(),
+                    openings = GameManager.Openings.Select(opening => new
+                    { id = opening.Scenario.ToString(), title = opening.Title, desc = opening.Description }),
+                    duty = new { kind = _game.TodayDuty.ToString(), workerId = _game.TodayDutyWorker, canRun = _game.DutyCanRun },
+                    duties = new[] { CampDuty.Pump, CampDuty.Triage }.Where(_game.OffersDuty).Select(PresentCampDuty),
+                    criticalResidents = _game.CriticalResidents,
+                    criticalHealth = GameManager.CriticalHealth,
+                    care = _game.GetCareForecast().Select(patient => new { id = patient.Id, name = patient.Name,
+                        health = patient.Health, afterCare = patient.AfterCare, treated = patient.ReceivesTriage }),
+                    towerCalibrated = _game.TowerCalibrated,
+                    relayInstalled = _game.RelayInstalled,
+                    canInstall = _game.CanInstallRelay,
+                    canAffordRelay = _game.CanAffordRelay,
+                    relayParts = GameManager.RelayPartsCost,
+                    relayPower = GameManager.RelayPowerCost,
+                    relayTestPower = GameManager.RelayTestPower,
+                    relayTestIssue = _game.RelayTestForecast,
+                    relayAwaitingTest = _game.RelayAwaitingTest
+                },
                 lastDailyEvent = _game.LastDailyEvent,
                 ending = _game.IsGameOver ? PresentEnding() : null,
                 forecast = _game.Time.GetSupplyForecast().Select(entry => new
@@ -371,6 +402,21 @@ namespace LastArchive
             });
         }
 
+        private object PresentCampDuty(CampDuty duty)
+        {
+            bool pump = duty == CampDuty.Pump;
+            return new
+            {
+                id = duty.ToString(),
+                title = pump ? "净水值班" : "医疗值班",
+                desc = pump ? $"预付 {GameManager.PumpPower} 电力。日终供水 +{GameManager.EmergencyWater}。" :
+                    $"预付 {GameManager.TriageMedicine} 药品。日终为生命最低的 {GameManager.TriagePatients} 位居民各恢复最多 {GameManager.TriageHeal} 生命。",
+                requirement = pump ? $"工程 ≥ {GameManager.PumpSkill}" : $"医疗 ≥ {GameManager.TriageSkill}",
+                affordable = _game.AffordsDuty(duty),
+                candidates = _game.NPCs.GetAllNPCs().Where(npc => _game.CanStaffDuty(duty, npc)).Select(npc => new { id = npc.Id, name = npc.Name })
+            };
+        }
+
         private string GetNPCs()
         {
             var npcs = new List<object>();
@@ -386,7 +432,8 @@ namespace LastArchive
                     loyalty = n.Loyalty, hunger = n.Hunger, fatigue = n.Fatigue,
                     status = n.Status.ToString(), work = n.CurrentWork.ToString(),
                     mental = _game.Psychology.GetStateName(mental), mentalKey = mental.ToString(),
-                    canExplore = n.CanExplore && _game.Psychology.CanExplore(n.Id),
+                    canExplore = _game.CanExploreResident(n),
+                    onDuty = _game.TodayDutyWorker == n.Id,
                     combat = n.Combat, medical = n.Medical, engineering = n.Engineering,
                     scavenging = n.Scavenging, social = n.Social,
                     diaries = n.Memory.DiaryHistory,
@@ -580,12 +627,47 @@ namespace LastArchive
 
         private static string Failure(string message) => JsonSerializer.Serialize(new { ok = false, msg = message });
 
-        private string DoNewGame()
+        private string DoNewGame(HttpListenerRequest req)
         {
-            _game = CreateGame();
+            var body = ReadBody(req);
+            var data = string.IsNullOrWhiteSpace(body) ? null : JsonSerializer.Deserialize<Dictionary<string, string>>(body);
+            var scenario = data?.GetValueOrDefault("scenario", nameof(CampaignScenario.Standard)) ?? nameof(CampaignScenario.Standard);
+            var opening = GameManager.Openings.FirstOrDefault(entry => entry.Scenario.ToString() == scenario);
+            if (opening == null) return Failure("请选择有效的开局局势。");
+            _game = CreateGame(opening.Scenario);
             _log.Clear();
-            AddLog(new List<string> { "新游戏开始！" });
-            return JsonSerializer.Serialize(new { ok = true, msg = "已开启新游戏。" });
+            AddLog($"新游戏开始：{opening.Title}。");
+            return JsonSerializer.Serialize(new { ok = true, msg = $"已开启「{opening.Title}」。" });
+        }
+
+        private string DoCampDuty(HttpListenerRequest req)
+        {
+            var data = JsonSerializer.Deserialize<Dictionary<string, string>>(ReadBody(req));
+            var duty = data?.GetValueOrDefault("duty") switch
+            {
+                nameof(CampDuty.Pump) => CampDuty.Pump,
+                nameof(CampDuty.Triage) => CampDuty.Triage,
+                _ => CampDuty.None
+            };
+            var id = data?.GetValueOrDefault("npcId");
+            if (!_game.AssignCampDuty(duty, id)) return Failure("无法排班。请检查物资、居民技能以及今天是否已经出过远征。");
+            var message = $"{_game.NPCs.GetNPC(id).Name} 已留守，日终完成值班。";
+            AddLog(message);
+            return JsonSerializer.Serialize(new { ok = true, msg = message });
+        }
+
+        private string DoPlanSupply(HttpListenerRequest req)
+        {
+            var data = JsonSerializer.Deserialize<Dictionary<string, string>>(ReadBody(req));
+            var route = data?.GetValueOrDefault("route") switch
+            {
+                nameof(SupplyRoute.Homestead) => SupplyRoute.Homestead,
+                nameof(SupplyRoute.Caravan) => SupplyRoute.Caravan,
+                _ => SupplyRoute.Undecided
+            };
+            return _game.PlanSupplyRoute(route)
+                ? JsonSerializer.Serialize(new { ok = true, msg = "已选择补给路线，日终结算时确认。" })
+                : Failure("当前不能确认这条补给路线，请检查设施和物资。");
         }
 
         private string DoBuild(HttpListenerRequest req)
@@ -637,26 +719,11 @@ namespace LastArchive
             return JsonSerializer.Serialize(new { ok = true, dialogue });
         }
 
-        private string DoExplore(HttpListenerRequest req)
-        {
-            var body = ReadBody(req);
-            var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
-            string mapId = data.ContainsKey("map") ? data["map"].GetString() : "";
-            var teamIds = new List<string>();
-            if (data.ContainsKey("team"))
-            {
-                foreach (var el in data["team"].EnumerateArray()) teamIds.Add(el.GetString());
-            }
-            bool ok = _game.Exploration.StartExploration(mapId, teamIds);
-            if (ok)
-            {
-                AddLog($"开启了 {mapId} 的探索之旅");
-            }
-            return JsonSerializer.Serialize(new { ok, msg = ok ? "" : "启动探索失败" });
-        }
+        private string DoExplore(HttpListenerRequest req) => DoExploreStart(req);
 
         private string DoCombat(HttpListenerRequest req)
         {
+            if (_game.Exploration.IsExploring) return Failure("远征中的战斗由房间遭遇触发。");
             var body = ReadBody(req);
             var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
             var teamIds = new List<string>();
@@ -807,6 +874,7 @@ namespace LastArchive
                 return JsonSerializer.Serialize(new { inCombat = false });
             }
 
+            var livingEnemies = _game.Combat.EnemyUnits.Where(unit => unit.IsAlive).ToList();
             var timeline = _game.Combat.ActionTimeline.Select(u => new
             {
                 id = u.Id,
@@ -821,6 +889,12 @@ namespace LastArchive
                 role = u.Role,
                 skillUsed = u.SkillUsed,
                 buffDefense = u.BuffDefense,
+                isCovering = u.IsCovering,
+                intent = _game.Combat.EnemyIntent(u),
+                incoming = _game.Combat.ChargeForecast(u),
+                attackDamage = !u.IsPlayerSide && u.IsAlive && _game.Combat.IsPlayerTurn
+                    ? CombatSystem.DamageAgainst(u, _game.Combat.ActiveUnit.Attack) : 0,
+                targetIndex = livingEnemies.IndexOf(u),
                 isDead = u.IsDead
             }).ToList();
 
@@ -848,11 +922,21 @@ namespace LastArchive
                     desc = map.Description,
                     danger = map.Rooms.Max(room => room.DangerLevel),
                     rooms = map.Rooms.Count,
+                    cacheNotes = map.Rooms.Where(room => room.IsFiniteCache || room.EventType == ExplorationEventType.FindMemoryShard)
+                        .Select(room => room.Name + (room.Claimed ? "已取完" : "可回收")),
+                    lockedReason = _game.ExpeditionLockReason(map.Id),
                     loot = map.MainLoot.Select(type => GameConfig.ResourceNames[(int)type])
                 });
                 var eligible = _game.NPCs.GetAllNPCs()
-                    .Where(npc => npc.CanExplore && _game.Psychology.CanExplore(npc.Id)).Select(npc => npc.Id);
-                return JsonSerializer.Serialize(new { isExploring = false, maps, eligible });
+                    .Where(_game.CanExploreResident).Select(npc => npc.Id);
+                return JsonSerializer.Serialize(new
+                {
+                    isExploring = false, maps, eligible,
+                    departuresLeft = _game.DeparturesLeft,
+                    foodCost = _game.DepartureFood,
+                    waterCost = _game.DepartureWater,
+                    affordable = _game.CanAffordDeparture
+                });
             }
 
             var connected = _game.Exploration.GetConnectedRooms().Select(r => new
@@ -863,7 +947,8 @@ namespace LastArchive
                 visited = r.Visited,
                 danger = r.DangerLevel,
                 locked = r.Locked,
-                canEnter = !r.Locked || (!string.IsNullOrEmpty(r.RequiredItem) && _game.Items.HasItem(r.RequiredItem)),
+                canEnter = _game.Exploration.HasSurvivors && _game.Exploration.CanEnter(r),
+                blocked = !_game.Exploration.HasClearance(r) ? "需先清除走廊守卫" : "",
                 requiredItem = r.RequiredItem ?? "",
                 keyName = string.IsNullOrEmpty(r.RequiredItem) ? "" : _game.Items.GetTemplate(r.RequiredItem)?.Name ?? r.RequiredItem
             }).ToList();
@@ -906,6 +991,14 @@ namespace LastArchive
                 roomDesc = _game.Exploration.CurrentRoom?.Description ?? "",
                 danger = _game.Exploration.CurrentRoom?.DangerLevel ?? 0,
                 searched = _game.Exploration.SearchedRooms.Contains(_game.Exploration.CurrentRoom?.Id ?? ""),
+                hasSurvivors = _game.Exploration.HasSurvivors,
+                offerBypass = _game.Exploration.CanOfferTowerBypass,
+                canBypass = _game.Exploration.CanBypassTower,
+                bypassPower = ExplorationSystem.BypassPower,
+                bypassEngineering = ExplorationSystem.BypassEngineering,
+                bypassRequirements = ExplorationSystem.BypassRequirements,
+                bypassIssue = _game.Exploration.TowerBypassIssue,
+                searchRequirement = _game.Exploration.SearchRequirement,
                 connectedRooms = connected,
                 fatigueOnReturn = Math.Min(20, 6 + 4 * _game.Exploration.SearchedRooms.Count),
                 loot = FormatAmounts(_game.Exploration.CurrentResult.CollectedResources),
@@ -920,6 +1013,10 @@ namespace LastArchive
             var body = ReadBody(req);
             var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
             string mapId = data.ContainsKey("map") ? data["map"].GetString() : "";
+            string locked = _game.ExpeditionLockReason(mapId);
+            if (locked.Length > 0) return Failure(locked);
+            if (_game.DeparturesLeft == 0) return Failure("今日远征名额已用完。");
+            if (!_game.CanAffordDeparture) return Failure("远征出发补给不足。");
             var teamIds = new List<string>();
             if (data.ContainsKey("team"))
             {
@@ -954,22 +1051,15 @@ namespace LastArchive
             }
 
             var roomName = _game.Exploration.CurrentRoom.Name;
-            var evt = _game.Exploration.SearchRoom();
+            var evt = _game.SearchExpeditionRoom();
 
             if (evt != null)
             {
                 AddLog($"搜寻了 {roomName}，结果: {evt.Description}");
 
-                if (evt.Type == ExplorationEventType.EnemyEncounter && !string.IsNullOrEmpty(evt.EnemyId))
+                if (evt.Type == ExplorationEventType.EnemyEncounter)
                 {
-                    var teamIds = _game.Exploration.TeamNPCIds;
-                    _game.Combat.StartCombat(teamIds, new List<string> { evt.EnemyId });
                     AddLog($"警告！在 {roomName} 遭遇敌人，被迫进入战斗！");
-                }
-
-                foreach (var rt in Enum.GetValues(typeof(ResourceType)))
-                {
-                    _game.Quests.UpdateResourceObjectives((ResourceType)rt, _game.Resources.GetResourceAmount((ResourceType)rt));
                 }
 
                 object rewardInfo = evt.Rewards.Select(r => new { type = r.Type.ToString(), amount = r.Amount }).ToList();
@@ -985,7 +1075,25 @@ namespace LastArchive
                 });
             }
 
-            return JsonSerializer.Serialize(new { ok = false, msg = "搜寻失败" });
+            var issue = _game.Exploration.SearchRequirement;
+            return Failure(issue.Length > 0 ? issue : "这里现在不能搜寻。");
+        }
+
+        private string DoBypassTower()
+        {
+            if (_game.Combat.InCombat) return Failure("无法在战斗中接线。");
+            if (!_game.Exploration.BypassTower()) return Failure(_game.Exploration.TowerBypassIssue);
+            const string message = "已绕过守备队并取得校准数据，可以返回营地。";
+            AddLog(message);
+            return JsonSerializer.Serialize(new { ok = true, msg = message });
+        }
+
+        private string DoInstallRelay()
+        {
+            if (!_game.InstallRelay()) return Failure("缺少校准数据或安装材料。");
+            const string message = "广播组件已安装。请检查日终试送电条件。";
+            AddLog(message);
+            return JsonSerializer.Serialize(new { ok = true, msg = message });
         }
 
         private string DoExploreSkillCheck(HttpListenerRequest req)
@@ -1014,13 +1122,15 @@ namespace LastArchive
                 return JsonSerializer.Serialize(new { ok = false, msg = "未在探索中" });
             }
 
+            var survived = _game.Exploration.HasSurvivors;
             var result = _game.Exploration.ReturnToBase();
             if (result != null)
             {
-                AddLog($"探索队伍安全返回基地，带回战利品！");
+                AddLog(survived ? "探索队伍已返回基地。" : "远征小队全灭，营地未收到新的现场档案。");
                 return JsonSerializer.Serialize(new
                 {
                     ok = true,
+                    survived,
                     loot = result.CollectedResources.Select(r => new { type = r.Type.ToString(), amount = r.Amount }).ToList(),
                     injured = result.InjuredNPCs
                 });
@@ -1031,6 +1141,7 @@ namespace LastArchive
 
         private string DoCombatStart(HttpListenerRequest req)
         {
+            if (_game.Exploration.IsExploring) return Failure("远征中的战斗由房间遭遇触发。");
             var body = ReadBody(req);
             var data = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(body);
             var teamIds = new List<string>();
@@ -1065,16 +1176,6 @@ namespace LastArchive
                 return Failure("无效的战斗行动。");
 
             var result = _game.Combat.ExecutePlayerAction(action, targetIndex, itemId);
-
-            if (result != null && result.Victory)
-            {
-                _game.Quests.UpdateObjectiveProgress("", ObjectiveType.DefeatEnemy, "", 1);
-            }
-
-            foreach (var rt in Enum.GetValues(typeof(ResourceType)))
-            {
-                _game.Quests.UpdateResourceObjectives((ResourceType)rt, _game.Resources.GetResourceAmount((ResourceType)rt));
-            }
 
             bool combatEnded = (result != null);
             object rewardsList = null;
